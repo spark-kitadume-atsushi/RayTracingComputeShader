@@ -1,0 +1,2 @@
+# RayTracingTraining
+レイトレ合宿のための作業リポジトリ
