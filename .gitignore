@@ -4,6 +4,7 @@ bin/
 
 # レンダリング出力画像
 *.ppm
+*.png
 
 # Visual Studio / VS Code 関連
 .vs/

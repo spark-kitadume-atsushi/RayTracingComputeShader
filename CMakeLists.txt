@@ -8,9 +8,16 @@ set ( CMAKE_CXX_EXTENSIONS        OFF )
 
 set ( SOURCE_ONE_WEEKEND
  src/main.cc
+ src/camera.h
  src/vec3.h
  src/color.h
+ src/material.h
  src/ray.h
+ src/hittable.h
+ src/hittable_list.h
+ src/sphere.h
+ src/interval.h
+ src/rtweekend.h
 )
 
 # 実行フォルダ「inOneWeekend」と、コンパイルするソースコードを指定
