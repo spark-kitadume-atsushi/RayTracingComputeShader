@@ -4,6 +4,8 @@
 #include "hittable.h"
 #include "material.h"
 
+#include <chrono>
+
 class camera {
 public:
     double aspec_ratio      = 1.0; // Ratio of image width over height
@@ -23,6 +25,8 @@ public:
     void render(const hittable& world) {
         initialize();
 
+        auto start_time = std::chrono::high_resolution_clock::now();
+
         std::cout << "P3\n" << image_width << ' ' << image_height << "\n255\n";
 
         for (int j = 0; j < image_height; j++) {
@@ -38,7 +42,10 @@ public:
             }
         }
 
-        std::clog << "\rDone.                           \n";
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end_time - start_time;
+
+        std::clog << "\rDone. (" << elapsed.count() << " seconds)                       \n";
     }
 private:
     int image_height;           // Rendered image height
