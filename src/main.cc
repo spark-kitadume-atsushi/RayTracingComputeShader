@@ -26,19 +26,23 @@ int main() {
                     // diffuse
                     auto albedo = color::random() * color::random();
                     sphere_material = make_shared<lambertian>(albedo);
+                    auto center2 = center + vec3(0, random_double(0, .5), 0);
+                    world.add(make_shared<sphere>(center, center2, radius, sphere_material));
                 }
                 else if (choose_mat < 0.95) {
                     // metal
                     auto albedo = color::random(0.5, 1);
                     auto fuzz = random_double(0, 0.5);
                     sphere_material = make_shared<metal>(albedo, fuzz);
+                    world.add(make_shared<sphere>(center, radius, sphere_material));
                 }
                 else {
                     // glass
                     sphere_material = make_shared<dielectric>(1.5);
+                    world.add(make_shared<sphere>(center, radius, sphere_material));
                 }
 
-                world.add(make_shared<sphere>(center, radius, sphere_material));
+                
             }
         }
     }

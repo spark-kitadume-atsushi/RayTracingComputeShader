@@ -17,6 +17,8 @@ set ( SOURCE_ONE_WEEKEND
  src/hittable_list.h
  src/sphere.h
  src/interval.h
+ src/aabb.h
+ src/bvh.h
  src/rtweekend.h
 )
 

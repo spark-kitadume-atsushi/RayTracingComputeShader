@@ -29,10 +29,10 @@ inline double random_double(double min, double max) {
 }
 
 #include "color.h"
-#include "material.h"
 #include "interval.h"
+#include "material.h"
 #include "ray.h"
 #include "vec3.h"
-#include "camera.h"
+
 
 #endif
