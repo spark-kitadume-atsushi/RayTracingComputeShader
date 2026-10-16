@@ -38,5 +38,6 @@ inline int random_int(int min, int max) {
 #include "material.h"
 #include "ray.h"
 #include "vec3.h"
+#include "texture.h"
 
 #endif

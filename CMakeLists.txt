@@ -12,6 +12,8 @@ set ( SOURCE_ONE_WEEKEND
  src/vec3.h
  src/color.h
  src/material.h
+ src/texture.h
+ src/rtw_stb_image.h
  src/ray.h
  src/hittable.h
  src/hittable_list.h
@@ -20,6 +22,7 @@ set ( SOURCE_ONE_WEEKEND
  src/aabb.h
  src/bvh.h
  src/rtweekend.h
+ src/external/stb_image.h
 )
 
 # 実行フォルダ「inOneWeekend」と、コンパイルするソースコードを指定

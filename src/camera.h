@@ -8,7 +8,7 @@
 
 class camera {
 public:
-    double aspec_ratio      = 1.0; // Ratio of image width over height
+    double aspect_ratio      = 1.0; // Ratio of image width over height
     int image_width         = 100; // Rendered image width in pixel count
     int samples_per_pixel   = 10; // Count of random samples for each pixel
     int max_depth           = 10; // Maximum number of ray bounces into scene
@@ -60,7 +60,7 @@ private:
 
     /* Private Camera Variables Here */
     void initialize() {
-        image_height = int(image_width / aspec_ratio);
+        image_height = int(image_width / aspect_ratio);
         image_height = (image_height < 1) ? 1 : image_height;
 
         pixel_samples_scale = 1.0 / samples_per_pixel;
