@@ -20,6 +20,7 @@ set ( SOURCE_ONE_WEEKEND
  src/sphere.h
  src/interval.h
  src/aabb.h
+ src/perlin.h
  src/bvh.h
  src/rtweekend.h
  src/external/stb_image.h
