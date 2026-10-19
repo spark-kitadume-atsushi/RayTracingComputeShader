@@ -23,6 +23,7 @@ set ( SOURCE_ONE_WEEKEND
  src/aabb.h
  src/perlin.h
  src/bvh.h
+ src/constant_medium.h
  src/rtweekend.h
  src/external/stb_image.h
 )
