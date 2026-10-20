@@ -6,7 +6,7 @@ set ( CMAKE_CXX_STANDARD          11 )
 set ( CMAKE_CXX_STANDARD_REQUIRED ON )
 set ( CMAKE_CXX_EXTENSIONS        OFF )
 
-set ( SOURCE_COMPUTE_SHADER
+set ( SOURCE_CPP
  src/main.cc
  src/camera.h
  src/vec3.h
@@ -28,8 +28,26 @@ set ( SOURCE_COMPUTE_SHADER
  src/external/stb_image.h
 )
 
+set ( SOURCE_SHADER
+ src/shader/RayTracingCS.hlsl 
+)
+
+# シェーダー群をVSの事前コンパイルから一括除外
+set_source_files_properties(${SOURCE_SHADER} PROPERTIES HEADER_FILE_ONLY TRUE)
+
 # 実行フォルダ「ComputeShader」と、コンパイルするソースコードを指定
-add_executable(ComputeShader ${SOURCE_COMPUTE_SHADER})
+add_executable(ComputeShader ${SOURCE_CPP} ${SOURCE_SHADER})
 
 # プロジェクト全体ではなく、ComputeShaderターゲットに対してインクルードパスを設定
 target_include_directories(ComputeShader PRIVATE src)
+
+# DirectX用のライブラリを追加
+target_link_libraries(ComputeShader PRIVATE d3d11 d3dcompiler dxgi)
+
+# --- シェーダーファイルの自動コピー設定 ---
+add_custom_command(TARGET ComputeShader POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shader"
+    "$<TARGET_FILE_DIR:ComputeShader>/shader"
+    COMMENT "Copying shader directory to output directory"
+)

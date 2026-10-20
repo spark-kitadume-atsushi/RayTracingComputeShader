@@ -10,6 +10,22 @@
 #include "quad.h"
 #include "texture.h"
 
+// 必須ヘッダー
+#include <d3d11.h>          // DirectX 11 本体
+#include <d3dcompiler.h>    // HLSLシェーダーのコンパイル用
+#include <wrl/client.h>     // Microsoft::WRL::ComPtr 用
+
+// エラーチェックなどで使う標準ライブラリ
+#include <iostream>
+#include <vector>
+#include <stdexcept>
+
+// ComPtr を短く書くための記述
+using Microsoft::WRL::ComPtr;
+
+// DirectX API の呼び出し結果をチェックするマクロ
+#define CheckHR(hr) if (FAILED(hr)) { throw std::runtime_error("DirectX Error!"); }
+
 void bouncing_spheres() {
     // World
     hittable_list world;
@@ -82,6 +98,7 @@ void bouncing_spheres() {
 
     cam.render(world);
 }
+
 void checkered_spheres() {
     hittable_list world;
 
@@ -385,8 +402,198 @@ void final_scene(int image_width, int samples_per_pixel, int max_depth) {
 
     cam.render(world);
 }
+
+int d3d_exe() {
+    try {
+        std::clog << "Initializing DirectX 11..." << std::endl;
+
+        // デバイスとコンテキストを格納するスマートポインタ
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+
+        // 要求する機能レベル(Directx 11.0または11.1)
+        D3D_FEATURE_LEVEL featureLevels[] = {
+            D3D_FEATURE_LEVEL_11_1,
+            D3D_FEATURE_LEVEL_11_0
+        };
+
+        HRESULT hr = D3D11CreateDevice(
+            nullptr,                    // デフォルトのアダプターを使用
+            D3D_DRIVER_TYPE_HARDWARE,   // GPUハードウェアアクセラレーション
+            nullptr,                    // ソフトウェアモジュール（未使用）
+            D3D11_CREATE_DEVICE_DEBUG,  // デバッグレイヤー有効（開発時のみ）
+            featureLevels,              // 要求する機能レベル配列
+            ARRAYSIZE(featureLevels),   // 配列の要素数
+            D3D11_SDK_VERSION,          // SDKバージョン
+            &device,                    // [出力] デバイスポインタ
+            nullptr,                    // [出力] 実際に使用される機能レベル
+            &context                    // [出力] コンテキストポインタ
+        );
+
+        CheckHR(hr);
+
+        std::clog << "DirectX 11 initialized successfully!" << std::endl;
+
+        // --- Compute Shader のコンパイルと登録 ---
+
+        // エラーメッセージを格納するための変数
+        ComPtr<ID3DBlob> errorBlob;
+        // コンパイル済みのシェーダーバイナリを格納する変数
+        ComPtr<ID3DBlob> shaderBlob;
+
+        std::clog << "Compiling Compute Shader..." << std::endl;
+        hr = D3DCompileFromFile(
+            L"shader/RayTracingCS.hlsl",    // シェーダーファイル名（同じ階層に配置）
+            nullptr,                        // マクロ定義（なし）
+            nullptr,                        // インクルードインターフェース（なし）
+            "CSMain",                       // エントリーポイント関数名
+            "cs_5_0",                       // シェーダープロファイル（CS 5.0）
+            0,                              // コンパイルフラグ（最適化など）
+            0,                              // エフェクトフラグ（なし）
+            &shaderBlob,                    // [出力] コンパイルされたバイナリ
+            &errorBlob                      // [出力] エラーメッセージ
+        );
+
+        // コンパイルエラーのハンドリング
+        if (FAILED(hr)) {
+            if (errorBlob) {
+                // errorBlobからエラーメッセージの文字列を取り出して表示
+                std::string errorMsg(static_cast<const char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
+                std::cerr << "Shader CompilationError:\n" << errorMsg << std::endl;
+            }
+            else {
+                // errorBlob が nullptr の場合はファイルアクセス周りのエラー
+                std::cerr << "Shader File Error (File not found or inaccessible). HRESULT: 0x"
+                    << std::hex << hr << std::dec << std::endl;
+            }
+            throw std::runtime_error("Failed to compile Compute Shader");
+        }
+
+        // デバイスを使ってコンパイル済みバイナリからComputeShaderオブジェクトを作成
+        ComPtr<ID3D11ComputeShader> computeShader;
+        hr = device->CreateComputeShader(
+            shaderBlob->GetBufferPointer(),     // コンパイル済みのバイナリのポインタ
+            shaderBlob->GetBufferSize(),        // バイナリのサイズ
+            nullptr,                            // クラスリンケージ（なし）
+            &computeShader                      // [出力] 作成されたComputeShaderオブジェクト
+        );
+
+        CheckHR(hr);
+
+        std::clog << "Compute Shader compiled and created successfully!" << std::endl;
+
+        const UINT image_width = 400;
+        const UINT image_height = 225;
+
+        //-----------------------------------------------------------------------------------------------
+        // 1:GPU書き込み用テクスチャ（Default）& UAV(Unordered Access View：順序なしアクセスビュー)の作成
+        //-----------------------------------------------------------------------------------------------
+        D3D11_TEXTURE2D_DESC texDesc = {};
+        texDesc.Width = image_width;
+        texDesc.Height = image_height;
+        texDesc.MipLevels = 1;
+        texDesc.ArraySize = 1;
+        texDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        texDesc.SampleDesc.Count = 1;
+        texDesc.Usage = D3D11_USAGE_DEFAULT;
+        texDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+
+        ComPtr<ID3D11Texture2D> outputTexture;
+        hr = device->CreateTexture2D(&texDesc, nullptr, &outputTexture);
+        CheckHR(hr);
+
+        D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.Format = texDesc.Format;
+        uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+
+        ComPtr<ID3D11UnorderedAccessView> uav;
+        hr = device->CreateUnorderedAccessView(outputTexture.Get(), &uavDesc, &uav);
+        CheckHR(hr);
+
+        //-----------------------------------------------------------------------------------------------
+        // 2:CPU読み取り用ステージングテクスチャ(Staging)の作成
+        //-----------------------------------------------------------------------------------------------
+        D3D11_TEXTURE2D_DESC stagingDesc = texDesc;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.BindFlags = 0;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+        ComPtr<ID3D11Texture2D> stagingTexture;
+        hr = device->CreateTexture2D(&stagingDesc, nullptr, &stagingTexture);
+        CheckHR(hr);
+
+        //-----------------------------------------------------------------------------------------------
+        // 3:Compute Shader の実行（パイプラインへバインド & Dispatch）
+        //-----------------------------------------------------------------------------------------------
+        std::clog << "Dispatching Compute Shader..." << std::endl;
+
+        // シェーダーとUAVをスロット0にバインド
+        context->CSSetShader(computeShader.Get(), nullptr, 0);
+        ID3D11UnorderedAccessView* uavArray[] = { uav.Get() };
+        context->CSSetUnorderedAccessViews(0, 1, uavArray, nullptr);
+
+        // スレッドグループ数を計算（1グループあたり8x8 = 64スレッド）
+        UINT dispatchX = (image_width + 7) / 8;
+        UINT dispatchY = (image_height + 7) / 8;
+        context->Dispatch(dispatchX, dispatchY, 1);
+
+        // 使用したリソースのバインドを解除（後続の安全のため）
+        ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
+        context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+
+        //-----------------------------------------------------------------------------------------------
+        // 4:GPUからCPUへの転送とデータ読み取り（Readback）
+        //-----------------------------------------------------------------------------------------------
+        // GPU内部でDefaultからStagingへテクスチャを丸ごとコピー
+        context->CopyResource(stagingTexture.Get(), outputTexture.Get());
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        hr = context->Map(stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+        CheckHR(hr);
+
+        //-----------------------------------------------------------------------------------------------
+        // 5:PPMファイルへの書き出し
+        //-----------------------------------------------------------------------------------------------
+        std::clog << "Saving to image.ppm..." << std::endl;
+        std::cout << "P3\n" << image_width << ' ' << image_height << "\n255\n";
+
+        // メモリの各行の先頭アドレスをRowPitch（パディング考慮）を使って走査
+        const uint8_t* rowPtr = static_cast<const uint8_t*>(mapped.pData);
+
+        for (UINT y = 0; y < image_height; ++y) {
+            const float* pixel = reinterpret_cast<const float*>(rowPtr);
+            for (UINT x = 0; x < image_width; x++) {
+                // float4 (R, G, B, A)を取得して0～255に変換
+                int r = static_cast<int>(255.999f * pixel[0]);
+                int g = static_cast<int>(255.999f * pixel[1]);
+                int b = static_cast<int>(255.999f * pixel[2]);
+
+                std::cout << r << ' ' << g << ' ' << b << '\n';
+                pixel += 4; // 次のピクセル（float4分進める）
+            }
+            rowPtr += mapped.RowPitch;
+        }
+
+        context->Unmap(stagingTexture.Get(), 0);
+
+        std::clog << "Done! image.ppm generated." << std::endl;
+    }
+    catch (const std::exception e) {
+        std::cerr << "Exception: " << e.what() << std::endl;
+        return 1;
+    }
+
+    return 0;
+}
+
 int main() {
-    switch (9) {
+
+    if (d3d_exe())
+    {
+        return 1;
+    }
+
+    switch (0) {
         case 1:bouncing_spheres(); break;
         case 2:checkered_spheres(); break;
         case 3:earth(); break;
