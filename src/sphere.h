@@ -76,4 +76,12 @@ private:
     }
 };
 
+// ‹…‘Ì\‘¢‘Ì(64bytes:16‚Ì”{”)
+struct GpuSphere {
+    float center[3];
+    float radius;
+    float center_vec[3];
+    float pad;
+    GpuMaterial mat;
+};
 #endif

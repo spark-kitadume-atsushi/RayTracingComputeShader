@@ -111,4 +111,15 @@ public:
 private:
     shared_ptr<texture> tex;
 };
+
+// 16バイトアライメントを考慮したマテリアル構造体(48bytes)
+struct GpuMaterial {
+    float albedo[3];
+    int type;           // 0:Lambertian 1:Metal 3:Dielectric
+    float albedo2[3];
+    int text_type;      // 0:単色 1:チェッカー 2:Image
+    float param;        // Metalのfuzz、またはDielectricの屈折率
+    float scale;
+    float pad[2];
+};
 #endif

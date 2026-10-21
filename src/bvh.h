@@ -77,4 +77,13 @@ private:
         return box_compare(a, b, 2);
     }
 };
+
+// GPUに送るフラットなBVNノード(32+8+8=48bytes)
+struct GpuBvhNode {
+    GpuAabb bbox;               // このノードのバウンディングボックス
+    int left_child_index;       // 右の子のインデックス(-1なら葉)
+    int right_child_index;      // 左の子のインデックス(-1なら葉)
+    int sphere_index;
+    int pad;
+};
 #endif

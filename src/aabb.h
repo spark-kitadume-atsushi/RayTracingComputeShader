@@ -90,4 +90,12 @@ aabb operator+(const aabb& bbox, const vec3& offset) {
 aabb operator+(const vec3& offset, const aabb& bbox) {
     return bbox + offset;
 }
+
+// GPUç\ë¢ëÃ32byte
+struct GpuAabb {
+    float min_point[3];
+    float pad0;
+    float max_point[3];
+    float pad1;
+};
 #endif

@@ -147,4 +147,22 @@ private:
         return color_from_emmision + color_from_scatter;
     }
 };
+
+// HLSLのcbufferと完全にレイアウトを一致させる
+// カメラ定数バッファ(64bytes)
+struct CameraBufferData
+{
+    float camera_center[3];
+    int   num_spheres;
+    float pixel00_loc[3];
+    int   samples_per_pixel;
+    float pixel_delta_u[3];
+    int   max_depth;
+    float pixel_delta_v[3];
+    float defocus_angle;
+    float defocus_disk_u[3];
+    float pad0;
+    float defocus_disk_v[3];
+    float pad1;
+};
 #endif

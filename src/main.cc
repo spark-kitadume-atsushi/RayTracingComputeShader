@@ -19,6 +19,7 @@
 #include <iostream>
 #include <vector>
 #include <stdexcept>
+#include <algorithm>
 
 // ComPtr を短く書くための記述
 using Microsoft::WRL::ComPtr;
@@ -403,6 +404,89 @@ void final_scene(int image_width, int samples_per_pixel, int max_depth) {
     cam.render(world);
 }
 
+// GPU
+GpuAabb compute_sphere_aabb(const GpuSphere& s)
+{
+    GpuAabb bbox;
+    // 静止球と動く球、両方に対応する
+    float c0[3] = { s.center[0], s.center[1] , s.center[2] };
+    float c1[3] = { s.center[0] + s.center_vec[0],s.center[1] + s.center_vec[1] ,s.center[2] + s.center_vec[2] };
+
+    for(int i = 0; i< 3;i ++) {
+        bbox.min_point[i] = std::fmin(c0[i], c1[i]) - s.radius;
+        bbox.max_point[i] = std::fmax(c0[i], c1[i]) + s.radius;
+    }
+
+    return bbox;
+}
+
+GpuAabb merge_aabb(const GpuAabb& a, const GpuAabb& b)
+{
+    GpuAabb bbox;
+    for (int i = 0; i < 3; i++) {
+        bbox.min_point[i] = std::fmin(a.min_point[i], b.min_point[i]);
+        bbox.max_point[i] = std::fmax(a.max_point[i], b.max_point[i]);
+    }
+    return bbox;
+}
+
+// BVH構築とフラット化関数
+// 戻り値はフラット配列におけるこのノードのインデックス
+int build_flat_bvh(std::vector<GpuSphere>& spheres, std::vector<int>& indices, int start, int end, std::vector<GpuBvhNode>& flat_nodes)
+{
+    int span = end - start;
+    int current_node_index = static_cast<int>(flat_nodes.size());
+    flat_nodes.push_back(GpuBvhNode()); // 仮のノードを確保
+    GpuBvhNode& current_node = flat_nodes[current_node_index];
+
+    if (span == 1) {
+        // 葉ノード（球を1つ含む）
+        current_node.left_child_index = -1;
+        current_node.right_child_index = -1;
+        current_node.sphere_index = indices[start];
+        current_node.bbox = compute_sphere_aabb(spheres[indices[start]]);
+        return current_node_index;
+    }
+
+    // 分割実の決定
+    GpuAabb bounds = compute_sphere_aabb(spheres[indices[start]]);
+    for (int i = start + 1; i < end; i++) {
+        bounds = merge_aabb(bounds, compute_sphere_aabb(spheres[indices[i]]));
+    }
+
+    float extent_x = bounds.max_point[0] - bounds.min_point[0];
+    float extent_y = bounds.max_point[1] - bounds.min_point[1];
+    float extent_z = bounds.max_point[2] - bounds.min_point[2];
+
+    int axis = 0;
+    if (extent_y > extent_x && extent_y > extent_z) {
+        axis = 1;
+    }
+    else if (extent_z > extent_x && extent_z > extent_y){
+        axis = 2;
+    }
+
+    // 軸でソート
+    std::sort(indices.begin() + start, indices.begin() + end,
+        [&spheres, axis](int a, int b) {
+            return spheres[a].center[axis] < spheres[b].center[axis];
+        });
+
+    int mid = start + span / 2;
+
+    // 再帰的に子ノードを構築（※再帰呼び出してvectorが再アロケートされると
+    // current_nodeの参照が壊れるため、インデックスで取得し直す
+    int left_idx = build_flat_bvh(spheres, indices, start, mid, flat_nodes);
+    int right_idx = build_flat_bvh(spheres, indices, mid, end, flat_nodes);
+
+    flat_nodes[current_node_index].left_child_index = left_idx;
+    flat_nodes[current_node_index].right_child_index = right_idx;
+    flat_nodes[current_node_index].sphere_index = -1;       // 内部ノード
+    flat_nodes[current_node_index].bbox = merge_aabb(flat_nodes[left_idx].bbox, flat_nodes[right_idx].bbox);
+
+    return current_node_index;
+}
+
 int d3d_exe() {
     try {
         std::clog << "Initializing DirectX 11..." << std::endl;
@@ -482,8 +566,363 @@ int d3d_exe() {
 
         std::clog << "Compute Shader compiled and created successfully!" << std::endl;
 
-        const UINT image_width = 400;
-        const UINT image_height = 225;
+        // シェーダーコンパイル確認後に実行
+
+        const UINT image_width = 1200;
+        const UINT image_height = 675;
+        const int samples_per_pixel = 100;
+        const int max_depth = 50;
+
+        // --------------------------------------------------------------------------
+        // シーン配置物
+        // --------------------------------------------------------------------------
+        std::vector<GpuSphere> scene;
+
+#if false
+        // 地面 (静止)
+        scene.push_back({
+            {0.0f, -1000.0f, 0.0f}, 1000.0f,
+            {0.0f, 0.0f, 0.0f}, 0.0f,
+            { {0.5f, 0.5f, 0.5f}, 0, 0.0f }
+            });
+
+        // ランダムな小球体群
+        for (int a = -11; a < 11; a++) {
+            for (int b = -11; b < 11; b++) {
+                auto choose_mat = random_double();
+                point3 center(a + 0.9 * random_double(), 0.2, b + 0.9 * random_double());
+
+                if ((center - point3(4, 0.2, 0)).length() > 0.9) {
+                    if (choose_mat < 0.8) {
+                        // 拡散 (Lambertian)
+                        auto albedo = color::random() * color::random();
+                        auto center2 = center + vec3(0, random_double(0, 0.5), 0);
+                        vec3 center_vec = center2 - center;
+                        scene.push_back({
+                            {(float)center.x(), (float)center.y(), (float)center.z()},
+                            0.2f,
+                            {(float)center_vec.x(), (float)center_vec.y(), (float)center_vec.z()},
+                            0.0f,
+                            { {(float)albedo.x(), (float)albedo.y(), (float)albedo.z()}, 0, 0.0f }
+                         });
+                    }
+                    else if (choose_mat < 0.95) {
+                        // 金属 (Metal)
+                        auto albedo = color::random(0.5, 1);
+                        auto fuzz = (float)random_double(0, 0.5);
+                        scene.push_back({
+                            {(float)center.x(), (float)center.y(), (float)center.z()},
+                            0.2f,
+                            {0.0f, 0.0f, 0.0f}, 0.0f,
+                            { {(float)albedo.x(), (float)albedo.y(), (float)albedo.z()}, 1, fuzz }
+                        });
+                    }
+                    else {
+                        // ガラス (Dielectric)
+                        scene.push_back({
+                            {(float)center.x(), (float)center.y(), (float)center.z()},
+                            0.2f,
+                            {0.0f, 0.0f, 0.0f}, 0.0f,
+                            { {1.0f, 1.0f, 1.0f}, 2, 1.5f }
+                        });
+                    }
+                }
+            }
+        }
+
+        // 3つの大球体
+        scene.push_back({ {0.0f, 1.0f, 0.0f}, 1.0f,  {0.0f, 0.0f, 0.0f}, 0.0f, { {1.0f, 1.0f, 1.0f}, 2, 1.5f } }); // ガラス
+        scene.push_back({ {-4.0f, 1.0f, 0.0f}, 1.0f, {0.0f, 0.0f, 0.0f}, 0.0f, { {0.4f, 0.2f, 0.1f}, 0, 0.0f } }); // 拡散
+        scene.push_back({ {4.0f, 1.0f, 0.0f}, 1.0f,  {0.0f, 0.0f, 0.0f}, 0.0f, { {0.7f, 0.6f, 0.5f}, 1, 0.0f } }); // 金属
+#elseif false
+        GpuMaterial checker_mat = {};
+        checker_mat.type = 0;
+        checker_mat.text_type = 1;
+        checker_mat.scale = 0.32f;
+
+        // 色1: 暗めの緑 (0.2, 0.3, 0.1)
+        checker_mat.albedo[0] = 0.2f; checker_mat.albedo[1] = 0.3f; checker_mat.albedo[2] = 0.1f;
+        // 色2: 明るい白 (0.9, 0.9, 0.9)
+        checker_mat.albedo2[0] = 0.9f; checker_mat.albedo2[1] = 0.9f; checker_mat.albedo2[2] = 0.9f;
+
+        // 下の球
+        scene.push_back({
+            {0.0f, -10.0f, 0.0f}, 10.0f,
+            {0.0f, 0.0f, 0.0f}, 0.0f,
+            checker_mat
+            });
+
+        // 上の球
+        scene.push_back({
+            {0.0f, 10.0f, 0.0f}, 10.0f,
+            {0.0f, 0.0f, 0.0f}, 0.0f,
+            checker_mat
+            });
+#elseif false
+        GpuMaterial earth_mat = {};
+        earth_mat.type = 0;       // Lambertian
+        earth_mat.text_type = 2;  // 2: Image Texture
+
+        // 中心 (0, 0, 0), 半径 2.0 の地球儀
+        scene.push_back({
+            {0.0f, 0.0f, 0.0f}, 2.0f,
+            {0.0f, 0.0f, 0.0f}, 0.0f,
+            earth_mat
+            });
+#else
+        GpuMaterial perlin_mat = {};
+        perlin_mat.type = 0;        // Lambertian
+        perlin_mat.text_type = 3;   // 3: Perlin Marble
+        perlin_mat.scale = 4.0f;    // 周波数スケール
+        perlin_mat.albedo[0] = 1.0f;
+        perlin_mat.albedo[1] = 1.0f;
+        perlin_mat.albedo[2] = 1.0f;
+        
+        // 地面の巨大球 (半径 1000)
+        scene.push_back({
+            {0.0f, -1000.0f, 0.0f}, 1000.0f,
+            {0.0f, 0.0f, 0.0f}, 0.0f,
+            perlin_mat
+            });
+        
+        // 浮遊球 (半径 2)
+        scene.push_back({
+            {0.0f, 2.0f, 0.0f}, 2.0f,
+            {0.0f, 0.0f, 0.0f}, 0.0f,
+            perlin_mat
+            });
+#endif
+        // --------------------------------------------------------------------------
+        // BVHの構築とフラット化
+        // --------------------------------------------------------------------------
+        std::vector<int> sphere_indices(scene.size());
+        for (int i = 0; i < scene.size(); ++i) sphere_indices[i] = i;
+
+        std::vector<GpuBvhNode> bvh_nodes;
+        // ルートノードから構築を開始（戻り値は常に0になるはず）
+        build_flat_bvh(scene, sphere_indices, 0, static_cast<int>(scene.size()), bvh_nodes);
+
+        // --------------------------------------------------------------------------
+        // 描画準備
+        // --------------------------------------------------------------------------
+
+        // 描画時間計測タイマーセット
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+        // --------------------------------------------------------------------------
+        // StructureBufferとSRVの作成 球体(t0)
+        // --------------------------------------------------------------------------
+        D3D11_BUFFER_DESC sbDesc = {};
+        sbDesc.ByteWidth = static_cast<UINT>(sizeof(GpuSphere) * scene.size());
+        sbDesc.Usage = D3D11_USAGE_DEFAULT;
+        sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;   // 構造体用の設定
+        sbDesc.StructureByteStride = sizeof(GpuSphere);
+
+        D3D11_SUBRESOURCE_DATA sbInitData = {};
+        sbInitData.pSysMem = scene.data();
+
+        ComPtr<ID3D11Buffer> sphereBuffer;
+        hr = device->CreateBuffer(&sbDesc, &sbInitData, &sphereBuffer);
+        CheckHR(hr);
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = static_cast<UINT>(scene.size());
+
+        ComPtr<ID3D11ShaderResourceView> sphereSRV;
+        hr = device->CreateShaderResourceView(sphereBuffer.Get(), &srvDesc, &sphereSRV);
+        CheckHR(hr);
+
+        // --------------------------------------------------------------------------
+        // StructureBufferとSRVの作成 VBHノード(t1)
+        // --------------------------------------------------------------------------
+        D3D11_BUFFER_DESC bvhDesc = {};
+        bvhDesc.ByteWidth = static_cast<UINT>(sizeof(GpuBvhNode) * bvh_nodes.size());
+        bvhDesc.Usage = D3D11_USAGE_DEFAULT;
+        bvhDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        bvhDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        bvhDesc.StructureByteStride = sizeof(GpuBvhNode);
+
+        D3D11_SUBRESOURCE_DATA bvhInitData = {};
+        bvhInitData.pSysMem = bvh_nodes.data();
+
+        ComPtr<ID3D11Buffer> bvhBuffer;
+        hr = device->CreateBuffer(&bvhDesc, &bvhInitData, &bvhBuffer);
+        CheckHR(hr);
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC bvhSrvDesc = {};
+        bvhSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        bvhSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        bvhSrvDesc.Buffer.FirstElement = 0;
+        bvhSrvDesc.Buffer.NumElements = static_cast<UINT>(bvh_nodes.size());
+
+        ComPtr<ID3D11ShaderResourceView> bvhSRV;
+        hr = device->CreateShaderResourceView(bvhBuffer.Get(), &bvhSrvDesc, &bvhSRV);
+        CheckHR(hr);
+
+        // --------------------------------------------------------------------------
+        // サンプラーステートの作成(s0)
+        // --------------------------------------------------------------------------
+        D3D11_SAMPLER_DESC sampDesc = {};
+        sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;  // バイリニア補間
+        sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;     // 経度方向はリピート
+        sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;    // 緯度（極）方向はクランプ
+        sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+        sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sampDesc.MinLOD = 0;
+        sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+        ComPtr<ID3D11SamplerState> linearSampler;
+        hr = device->CreateSamplerState(&sampDesc, &linearSampler);
+        CheckHR(hr);
+
+#if false
+        // --------------------------------------------------------------------------
+        // テクスチャSRVの作成(t2)
+        // 現時点では1x1の白ピクセル。世界地図実装時はここを画像データに置き換える
+        // --------------------------------------------------------------------------
+        uint32_t white_pixel = 0xFFFFFFFF;
+        D3D11_TEXTURE2D_DESC imgDesc = {};
+        imgDesc.Width = 1;
+        imgDesc.Height = 1;
+        imgDesc.MipLevels = 1;
+        imgDesc.ArraySize = 1;
+        imgDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        imgDesc.SampleDesc.Count = 1;
+        imgDesc.Usage = D3D11_USAGE_IMMUTABLE;
+        imgDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+        D3D11_SUBRESOURCE_DATA imgInitData = {};
+        imgInitData.pSysMem = &white_pixel;
+        imgInitData.SysMemPitch = sizeof(uint32_t);
+#else
+
+        // --------------------------------------------------------------------------
+        // 画像テクスチャのロードとSRV作成(t2)
+        // --------------------------------------------------------------------------
+        std::string texture_name = "earthmap.jpg";
+        rtw_image earth_img(texture_name.c_str());
+        if (earth_img.width() <= 0) {
+            std::cerr << "Warning: Failed to load " << texture_name << " Check file path." << std::endl;
+        }
+
+        UINT tex_width  = static_cast<UINT>(earth_img.width() > 0 ? earth_img.width(): 1);
+        UINT tex_height = static_cast<UINT>(earth_img.height() > 0 ? earth_img.height() : 1);
+
+        // 3バイトRGBから4バイトRGBAへの変換
+        std::vector<uint8_t> rgba_data(tex_width * tex_height * 4, 255);
+        if (earth_img.width() > 0) {
+            for (UINT y = 0; y < tex_height; ++y) {
+                for (UINT x = 0; x < tex_width; ++x) {
+                    auto p = earth_img.pixel_data(x, y);
+                    size_t idx = (y * tex_width + x) * 4;
+                    rgba_data[idx + 0] = p[0];
+                    rgba_data[idx + 1] = p[1];
+                    rgba_data[idx + 2] = p[2];
+                    rgba_data[idx + 3] = 255;
+                }
+            }
+        }
+
+        D3D11_TEXTURE2D_DESC imgDesc = {};
+        imgDesc.Width = tex_width;
+        imgDesc.Height = tex_height;
+        imgDesc.MipLevels = 1;
+        imgDesc.ArraySize = 1;
+        imgDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        imgDesc.SampleDesc.Count = 1;
+        imgDesc.Usage = D3D11_USAGE_IMMUTABLE;
+        imgDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+        D3D11_SUBRESOURCE_DATA imgInitData = {};
+        imgInitData.pSysMem = rgba_data.data();
+        imgInitData.SysMemPitch = tex_width * 4;        // 1行あたりのバイト数
+
+#endif
+        ComPtr<ID3D11Texture2D> imageTex;
+        hr = device->CreateTexture2D(&imgDesc, &imgInitData, &imageTex);
+        CheckHR(hr);
+
+        ComPtr<ID3D11ShaderResourceView> imageSRV;
+        hr = device->CreateShaderResourceView(imageTex.Get(), nullptr, &imageSRV);
+        CheckHR(hr);
+
+        // カメラパラメータの計算
+        point3 lookfrom(13, 2, 3);
+        point3 lookat(0, 0, 0);
+        vec3 vup(0,1,0);
+
+        double vfov = 20.0;
+        double defocus_angle = 0.0;
+        double focus_dist = 10.0;
+
+        auto theta = degrees_to_radians(vfov);
+        auto h = std::tan(theta / 2.0);
+        auto viewport_height = 2.0 * h * focus_dist;
+        auto viewport_width = viewport_height * ((double)image_width / (double)image_height);
+
+        auto w = unit_vector(lookfrom - lookat);
+        auto u = unit_vector(cross(vup, w));
+        auto v = cross(w, u);
+
+        auto viewport_u = viewport_width * u;
+        auto viewport_v = viewport_height * -v;
+
+        auto pixel_delta_u = viewport_u / (double)image_width;
+        auto pixel_delta_v = viewport_v / (double)image_height;
+
+        auto viewport_upper_left = lookfrom - (focus_dist * w) - viewport_u / 2.0 - viewport_v / 2.0;
+        auto pixel00_loc = viewport_upper_left + 0.5 * (pixel_delta_u + pixel_delta_v);
+
+        auto defocus_radius = focus_dist * std::tan(degrees_to_radians(defocus_angle / 2.0));
+        auto defocus_disk_u = u * defocus_radius;
+        auto defocus_disk_v = v * defocus_radius;
+
+        // バッファ転送用データに格納
+        CameraBufferData cbData = {};
+        cbData.camera_center[0] = (float)lookfrom.x();
+        cbData.camera_center[1] = (float)lookfrom.y();
+        cbData.camera_center[2] = (float)lookfrom.z();
+        cbData.num_spheres = static_cast<int>(scene.size());
+
+        cbData.pixel00_loc[0] = (float)pixel00_loc.x();
+        cbData.pixel00_loc[1] = (float)pixel00_loc.y();
+        cbData.pixel00_loc[2] = (float)pixel00_loc.z();
+        cbData.samples_per_pixel = samples_per_pixel;
+
+        cbData.pixel_delta_u[0] = (float)pixel_delta_u.x();
+        cbData.pixel_delta_u[1] = (float)pixel_delta_u.y();
+        cbData.pixel_delta_u[2] = (float)pixel_delta_u.z();
+        cbData.max_depth = max_depth;
+
+        cbData.pixel_delta_v[0] = (float)pixel_delta_v.x();
+        cbData.pixel_delta_v[1] = (float)pixel_delta_v.y();
+        cbData.pixel_delta_v[2] = (float)pixel_delta_v.z();
+        cbData.defocus_angle = (float)defocus_angle;
+
+        cbData.defocus_disk_u[0] = (float)defocus_disk_u.x();
+        cbData.defocus_disk_u[1] = (float)defocus_disk_u.y();
+        cbData.defocus_disk_u[2] = (float)defocus_disk_u.z();
+
+        cbData.defocus_disk_v[0] = (float)defocus_disk_v.x();
+        cbData.defocus_disk_v[1] = (float)defocus_disk_v.y();
+        cbData.defocus_disk_v[2] = (float)defocus_disk_v.z();
+
+        // 定数バッファの作成
+        D3D11_BUFFER_DESC cbDesc = {};
+        cbDesc.ByteWidth = sizeof(CameraBufferData);    // 16の倍数
+        cbDesc.Usage = D3D11_USAGE_DEFAULT;
+        cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+
+        D3D11_SUBRESOURCE_DATA initData = {};
+        initData.pSysMem = &cbData;
+
+        ComPtr<ID3D11Buffer> cameraBuffer;
+        hr = device->CreateBuffer(&cbDesc, &initData, &cameraBuffer);
+        CheckHR(hr);
 
         //-----------------------------------------------------------------------------------------------
         // 1:GPU書き込み用テクスチャ（Default）& UAV(Unordered Access View：順序なしアクセスビュー)の作成
@@ -527,8 +966,21 @@ int d3d_exe() {
         //-----------------------------------------------------------------------------------------------
         std::clog << "Dispatching Compute Shader..." << std::endl;
 
-        // シェーダーとUAVをスロット0にバインド
+        // シェーダーをスロット0にバインド
         context->CSSetShader(computeShader.Get(), nullptr, 0);
+
+        // SRV（球体バッファ:t0）とSRV（BVHバッファ:t1）をバインド
+        ID3D11ShaderResourceView* srvArray[] = { sphereSRV.Get(), bvhSRV.Get(), imageSRV.Get()};
+        context->CSSetShaderResources(0, 3, srvArray);
+
+        // サンプラーをセット
+        ID3D11SamplerState* samplerArray[] = { linearSampler.Get() };
+        context->CSSetSamplers(0, 1, samplerArray);
+
+        // 定数バッファをスロット0(b0)にバインド
+        ID3D11Buffer* cbArray[] = { cameraBuffer.Get() };
+        context->CSSetConstantBuffers(0, 1, cbArray);
+
         ID3D11UnorderedAccessView* uavArray[] = { uav.Get() };
         context->CSSetUnorderedAccessViews(0, 1, uavArray, nullptr);
 
@@ -576,7 +1028,10 @@ int d3d_exe() {
 
         context->Unmap(stagingTexture.Get(), 0);
 
-        std::clog << "Done! image.ppm generated." << std::endl;
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end_time - start_time;
+
+        std::clog << "\rDone. (" << elapsed.count() << " seconds)                       \n";
     }
     catch (const std::exception e) {
         std::cerr << "Exception: " << e.what() << std::endl;
