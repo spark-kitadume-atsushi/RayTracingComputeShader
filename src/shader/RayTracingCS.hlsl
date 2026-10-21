@@ -136,21 +136,30 @@ float2 get_sphere_uv(float3 outward_normal)
 // パーリンノイズ（3D勾配ノイズ）
 //--------------------------------------------
 
+// 高品質な3D整数ハッシュ(PCG3D)
+uint3 pcg3d(uint3 v)
+{
+    uint T = 1664525u;
+    v = v * T + 1013904223u;
+    v.x += v.y * T;
+    v.y += v.z * T;
+    v.z += v.x * T;
+    v ^= v >> 16u;
+    v.x += v.y * T;
+    v.y += v.z * T;
+    v.z += v.x * T;
+    v ^= v >> 16u;
+    return v;
+}
+
 // 格子点(int3)から決定論的な単位勾配ベクトルを生成するハッシュ
 float3 hash_gradient(int3 p)
 {
-    // 高速整数ハッシュ
-    int3 n = p.x * 127 + p.y * 311 + p.z * 743;
-    n = (n << 13) ^ n;
-    int3 nn = n * (n * n * 15731 + 789221) + 1376312589;
+    uint3 u = (uint3) p;
+    uint3 h = pcg3d(u);
 
     // [-1,1]のベクトルにして正規化
-    float3 g = float3(
-        (nn.x & 0x7fffffff) / 1073741824.0f - 1.0f,
-        (nn.y & 0x7fffffff) / 1073741824.0f - 1.0f,
-        (nn.z & 0x7fffffff) / 1073741824.0f - 1.0f
-    );
-
+    float3 g = (float3(h) / 4294967295.0f) * 2.0f - 1.0f;
     return normalize(g);
 }
 
@@ -181,7 +190,7 @@ float perlin_noise(float3 p)
     float nxy0 = lerp(nx00, nx10, u.y);
     float nxy1 = lerp(nx01, nx11, u.y);
 
-    return lerp(nx00, nxy1, u.z);
+    return lerp(nxy0, nxy1, u.z);
 }
 
 // タービュランス（多重低周波の絶対値加算）
@@ -228,7 +237,7 @@ float3 get_material_albedo(Material mat, float3 p, float2 uv)
     }
     
     // 単色（Solid）
-        return mat.albedo;
+    return mat.albedo;
 }
 
 // 球との交差判定関数
