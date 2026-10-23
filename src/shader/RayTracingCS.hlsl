@@ -322,26 +322,23 @@ bool hit_sphere(Sphere s, Ray r, float ray_tmin, float ray_tmax, inout HitRecord
     return true;
 }
 
-// 光線とAABBの交差点（スラブ法）
+// 高速・低レジスタ・早期脱出型の AABB 判定
 bool hit_aabb(Aabb box, Ray r, float3 inv_d, float ray_tmin, float ray_tmax)
 {
     [unroll]
     for (int a = 0; a < 3; ++a)
     {
-        //float invD = 1.0f / r.direction[a];
         float t0 = (box.min_point[a] - r.origin[a]) * inv_d[a];
         float t1 = (box.max_point[a] - r.origin[a]) * inv_d[a];
 
-        if (inv_d[a] < 0.0f)
-        {
-            float tmp = t0;
-            t0 = t1;
-            t1 = tmp;
-        }
+        // スカラーのハードウェア min/max（レジスタ消費1枠のみ）
+        float t_min = min(t0, t1);
+        float t_max = max(t0, t1);
 
-        ray_tmin = max(t0, ray_tmin);
-        ray_tmax = min(t1, ray_tmax);
+        ray_tmin = max(t_min, ray_tmin);
+        ray_tmax = min(t_max, ray_tmax);
         
+        // 【最重要】外れた軸の時点で即座に計算を打ち切る
         if (ray_tmax < ray_tmin)
             return false;
     }

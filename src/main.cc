@@ -686,13 +686,19 @@ int run_gpu_renderer(const SceneConfig sc) {
     ComPtr<ID3DBlob> shaderBlob;
 
     std::clog << "Compiling Compute Shader..." << std::endl;
+
+    UINT compileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3; // 最高レベルの最適化
+#ifdef _DEBUG
+    compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#endif
+
     hr = D3DCompileFromFile(
         L"shader/RayTracingCS.hlsl",    // シェーダーファイル名（同じ階層に配置）
         nullptr,                        // マクロ定義（なし）
         nullptr,                        // インクルードインターフェース（なし）
         "CSMain",                       // エントリーポイント関数名
         "cs_5_0",                       // シェーダープロファイル（CS 5.0）
-        0,                              // コンパイルフラグ（最適化など）
+        compileFlags,                              // コンパイルフラグ（最適化など）
         0,                              // エフェクトフラグ（なし）
         &shaderBlob,                    // [出力] コンパイルされたバイナリ
         &errorBlob                      // [出力] エラーメッセージ
@@ -873,7 +879,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     ID3D11ShaderResourceView* srvArray[] = { sphereSRV.Get(), bvhSRV.Get(), imageSRV.Get(), quadSRV.Get(), volSRV.Get() };
     context->CSSetShaderResources(0, 5, srvArray);
     ID3D11SamplerState* samplerArray[] = { linearSampler.Get() };
-    context->CSGetSamplers(0, 1, samplerArray);
+    context->CSSetSamplers(0, 1, samplerArray);
     ID3D11Buffer* cbArray[] = { cameraBuffer.Get() };
     context->CSSetConstantBuffers(0, 1, cbArray);
     ID3D11UnorderedAccessView* uavArray[] = { uav.Get() };
