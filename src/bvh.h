@@ -83,7 +83,30 @@ struct GpuBvhNode {
     GpuAabb bbox;               // このノードのバウンディングボックス
     int left_child_index;       // 右の子のインデックス(-1なら葉)
     int right_child_index;      // 左の子のインデックス(-1なら葉)
-    int sphere_index;
-    int pad;
+    int primitive_type;         // -1:Branch 0:Sphere 1:Quad
+    int primitive_index;
+};
+
+// 汎用BVH構築用の参照構造体
+struct PrimitiveRef {
+    int type;       // 0:Sphere 1:Quad
+    int index;      // 各配列内でのインデックス
+    GpuAabb bbox;
+    float center[3];
+
+    // デフォルトコンストラクタ
+    PrimitiveRef() : type(-1), index(-1), bbox{}, center{} {}
+
+    PrimitiveRef(int t, int idx, const GpuAabb& b)
+        :type(t), index(idx), bbox(b)
+    {
+        set_center();
+    }
+
+    void set_center() {
+        for (int i = 0; i < 3; ++i) {
+            center[i] = (bbox.min_point[i] + bbox.max_point[i]) * 0.5f;
+        }
+    }
 };
 #endif

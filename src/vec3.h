@@ -7,6 +7,7 @@ public:
 
     vec3() : e{ 0, 0, 0 } {}
     vec3(double e0, double e1, double e2) : e{ e0, e1, e2 } {}
+    vec3(const float* vec_f) : e { vec_f[0], vec_f[1], vec_f[2] } {}
 
     double x() const { return e[0]; }
     double y() const { return e[1]; }
@@ -46,6 +47,16 @@ public:
         // Return true if the vector is close to zero in all dimensions.
         auto s = 1e-8;
         return (std::fabs(e[0]) < s) && (std::fabs(e[1]) < s) && (std::fabs(e[2]) < s);
+    }
+
+    void copy_to(float* vec_f) const {
+        vec_f[0] = static_cast<float>(e[0]);
+        vec_f[1] = static_cast<float>(e[1]);
+        vec_f[2] = static_cast<float>(e[2]);
+    }
+
+    static vec3 convert(const float* vec_f) {
+        return vec3(vec_f[0], vec_f[1], vec_f[2]);
     }
 
     static vec3 random() {

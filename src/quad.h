@@ -98,4 +98,18 @@ inline shared_ptr<hittable_list> box(const point3& a, const point3& b, shared_pt
     return sides;
 }
 
+// HLSLと一致させた構造体(128bytes)
+struct GpuQuad {
+    float Q[3];         // 基準点
+    float D;            // 平面パラメーター(n.Q)
+    float u[3];         // 辺ベクトル 1
+    float pad0;
+    float v[3];         // 辺ベクトル 2
+    float pad1;
+    float normal[3];    // 単位法線
+    float pad2;
+    float w[3];         // 内外判定用補助ベクトル: n / (n.(u x v))
+    float pad3;
+    GpuMaterial mat;
+};
 #endif

@@ -153,9 +153,9 @@ private:
 struct CameraBufferData
 {
     float camera_center[3];
-    int   num_spheres;
+    int pass_index;
     float pixel00_loc[3];
-    int   samples_per_pixel;
+    int samples_this_pass;
     float pixel_delta_u[3];
     int   max_depth;
     float pixel_delta_v[3];
@@ -164,5 +164,7 @@ struct CameraBufferData
     float pad0;
     float defocus_disk_v[3];
     float pad1;
+    float background[3];
+    float pad2;
 };
 #endif

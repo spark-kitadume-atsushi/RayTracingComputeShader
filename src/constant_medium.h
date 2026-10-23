@@ -56,4 +56,21 @@ private:
     double neg_inv_density;
     shared_ptr<material> phase_function;
 };
+
+// Volume\‘¢‘Ì 96bytes
+struct GpuVolume {
+    int shape_type; //  0:sphere 1:Box
+    float density; // ”}¿–§“x
+    float pad0[2];
+    float albedo[3]; // U—F
+    float pad1;
+    float center[3]; // Sphere ’†S
+    float radius; // Sphere ”¼Œa
+    float box_min[3]; // Box Å¬“_
+    float rotate_y_deg; // Box Y²‰ñ“]Šp
+    float box_max[3]; // Box Å‘å“_
+    float pad2;
+    float translation[3]; // Box •½sˆÚ“®‹——£
+    float pad3;
+};
 #endif

@@ -3,13 +3,13 @@
 static const float PI     = 3.14159265358979323846f;
 static const float TWO_PI = 6.28318530717958647692f;
 
-// 被写界深度パラメータを追加したカメラ定数バッファ（96bytes:16の倍数）
+// 被写界深度パラメータを追加したカメラ定数バッファ（112bytes:16の倍数）
 cbuffer CameraBuffer : register(b0)
 {
     float3 CameraCenter;
-    int NumSpheres;
+    int PassIndex;          // 現在のパス番号
     float3 Pixel00Loc;
-    int SamplesPerPixel;
+    int SamplesThisPass;
     float3 PixelDeltaU;
     int MaxDepth;
     float3 PixelDeltaV;
@@ -18,6 +18,8 @@ cbuffer CameraBuffer : register(b0)
     float Pad0;
     float3 DefocusDiskV;
     float Pad1;
+    float3 BackgroundColor;
+    float Pad2;
 }
 
 // マテリアル(48bytes)
@@ -40,6 +42,40 @@ struct Sphere
     float3 center_vec;
     float pad;
     Material mat;
+};
+
+// 四角形プリミティブ(128bytes)
+struct Quad
+{
+    float3 Q;       // 基準点
+    float D;        // 平面パラメーター(n.Q)
+    float3 u;       // 辺ベクトル 1
+    float pad0;
+    float3 v;       // 辺ベクトル 2
+    float pad1;
+    float3 normal;  // 単位法線
+    float pad2;
+    float3 w;       // 内外判定用補助ベクトル: n / (n.(u x v))
+    float pad3;
+    Material mat;
+};
+
+// 参加媒質ボリューム(96bytes)
+struct Volume
+{
+    int shape_type; //  0:sphere 1:Box
+    float density; // 媒質密度
+    float2 pad0;
+    float3 albedo; // 散乱色
+    float pad1;
+    float3 center; // Sphere 中心
+    float radius; // Sphere 半径
+    float3 box_min; // Box 最小点
+    float rotate_y_deg; // Box Y軸回転角
+    float3 box_max; // Box 最大点
+    float pad2;
+    float3 translation; // Box 平行移動距離
+    float pad3;
 };
 
 // レイの定義
@@ -76,8 +112,8 @@ struct BvhNode
     Aabb bbox;
     int left_child_index;
     int right_child_index;
-    int sphere_index;
-    int pad;
+    int primitive_type;     // -1: Branch(内部ノード), 0: Sphere, 1: Quad
+    int primitive_index;    // 各配列内のインデックス
 };
 
 // 出力先テクスチャ（UAV:u0 スロットにバインド）
@@ -90,6 +126,11 @@ StructuredBuffer<BvhNode> BvhNodes : register(t1);
 Texture2D<float4> ImageTexture : register(t2);
 SamplerState LinearSampler : register(s0);
 
+// 四角形バッファ
+StructuredBuffer<Quad> Quads : register(t3);
+
+// Volumeバッファ
+StructuredBuffer<Volume> Volumes : register(t4);
 //--------------------------------------------
 // 高速疑似乱数（PCG Hash）
 //--------------------------------------------
@@ -206,12 +247,12 @@ float perlin_turb(float3 p, int depth)
         if (i >= depth)
             break;
         
-        accum += weight * abs(perlin_noise(temp_p));
+        accum += weight * perlin_noise(temp_p);
         weight *= 0.5f;
         temp_p *= 2.0f;
     }
 
-    return accum;
+    return abs(accum);
 }
 
 // テクスチャ種別に応じた表面色を計算
@@ -232,7 +273,7 @@ float3 get_material_albedo(Material mat, float3 p, float2 uv)
     else if (mat.text_type == 3)    // Perlin Marble Noise
     {
         // 大理石模様
-        float s = 0.5f * (1.0f + sin(mat.scale * p.z + 10.0f * perlin_turb(p, 7)));
+        float s = 0.5f * (1.0f + sin(mat.scale * p.z + 10.0f * perlin_turb(p * mat.scale, 7)));
         return s * mat.albedo;
     }
     
@@ -308,8 +349,121 @@ bool hit_aabb(Aabb box, Ray r, float ray_tmin, float ray_tmax)
     return true;
 }
 
+// 四角形の衝突判定
+bool hit_quad(Quad q, Ray r, float ray_tmin, float ray_tmax, inout HitRecord rec)
+{
+    float denom = dot(q.normal, r.direction);
+    
+    // レイと平面が平衡に近い場合は交差なし
+    if (abs(denom) < 1e-8f)
+        return false;
+    
+    // 平面との交差時刻t
+    float t = (q.D - dot(q.normal, r.origin)) / denom;
+    if (t <= ray_tmin || t >= ray_tmax)
+        return false;
+
+    // 衝突点pが四角形の内部にあるかを判定
+    float3 intersection = r.origin + t * r.direction;
+    float3 planar_hitpt_vector = intersection - q.Q;
+    float alpha = dot(q.w, cross(planar_hitpt_vector, q.v));
+    float beta  = dot(q.w, cross(q.u, planar_hitpt_vector));
+    
+    if (alpha < 0.0f || alpha > 1.0f || beta < 0.0f || beta > 1.0f)
+        return false;
+    
+    rec.t = t;
+    rec.p = intersection;
+    rec.uv = float2(alpha, beta);
+    rec.front_face = dot(r.direction, q.normal) < 0.0f;
+    rec.normal = rec.front_face ? q.normal : -q.normal;
+    rec.mat = q.mat;
+    return true;
+}
+
+// Volume衝突判定
+bool hit_volume(Volume vol, Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitRecord rec)
+{
+    float t_enter = -1e9f;
+    float t_exit = 1e9f;
+    
+    if (vol.shape_type == 0) // Sphere
+    {
+        float3 oc = vol.center - r.origin;
+        float a = dot(r.direction, r.direction);
+        float h = dot(r.direction, oc);
+        float c = dot(oc, oc) - vol.radius * vol.radius;
+        float discriminant = h * h - a * c;
+
+        if (discriminant < 0.0f)
+            return false;
+        
+        float sqrtd = sqrt(discriminant);
+        t_enter = (h - sqrtd) / a;
+        t_exit = (h + sqrtd) / a;
+    }
+    else    // Box
+    {
+        // ワールド空間のレイを箱のローカル空間へ逆変換
+        float3 p = r.origin - vol.translation;
+        float3 d = r.direction;
+        
+        if (abs(vol.rotate_y_deg) > 1e-4f)
+        {
+            float rad = -vol.rotate_y_deg * (PI / 180.0f);
+            float s = sin(rad);
+            float c = cos(rad);
+            p = float3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+            d = float3(c * d.x + s * d.z, d.y, -s * d.x + c * d.z);
+        }
+
+        [unroll]
+        for (int i = 0; i < 3; ++i)
+        {
+            float dir_component = abs(d[i]) > 1e-8f ? d[i] : (d[i] >= 0.0f ? 1e-8f : -1e-8f);
+            float invD = 1.0f / dir_component;
+            float t0 = (vol.box_min[i] - p[i]) * invD;
+            float t1 = (vol.box_max[i] - p[i]) * invD;
+            if (invD < 0.0f)
+            {
+                float tmp = t0;
+                t0 = t1;
+                t1 = tmp;
+            }
+            t_enter = max(t_enter, t0);
+            t_exit = min(t_exit, t1);
+            if (t_exit <= t_enter)
+                return false;
+        }
+    }
+
+    t_enter = max(t_enter, ray_tmin);
+    t_exit = min(t_exit, ray_tmax);
+
+    if (t_enter >= t_exit)
+        return false;
+        
+    if (t_enter < 0.0f)
+        t_enter = 0.0f;
+
+    float distance_inside_boundary = t_exit - t_enter;
+    float hit_distance = -(1.0f / vol.density) * log(max(1e-7f, rand_float(rng)));
+
+    if (hit_distance > distance_inside_boundary)
+        return false;
+
+    rec.t = t_enter + hit_distance;
+    rec.p = r.origin + rec.t * r.direction;
+    rec.normal = float3(1.0f, 0.0f, 0.0f); // 任意のダミー法線
+    rec.uv = float2(0.0f, 0.0f);
+    rec.front_face = true;
+    rec.mat.type = 4; // 4: Isotropic:等方
+    rec.mat.albedo = vol.albedo;
+    return true;
+}
+
 // BVHを平坦化した上で実行する
-bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout HitRecord rec)
+bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitRecord rec)
 {
     HitRecord temp_rec = (HitRecord)0;  // ゼロ初期化
     bool hit_anything = false;
@@ -331,10 +485,24 @@ bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout HitRecord rec)
         if (!hit_aabb(node.bbox, r, ray_tmin, closest_so_far))
             continue;
 
-        if (node.sphere_index >= 0)
+        if (node.primitive_type >= 0)
         {
-            // 葉ノード(Leaf):含まれる球体との交差判定を行う
-            if (hit_sphere(Spheres[node.sphere_index], r, ray_tmin, closest_so_far, temp_rec))
+            // 葉ノードチェック
+            bool hit = false;
+            if (node.primitive_type == 0)       // Sphere
+            {
+                hit = hit_sphere(Spheres[node.primitive_index], r, ray_tmin, closest_so_far, temp_rec);
+            }
+            else if (node.primitive_type == 1)  // Quad
+            {
+                hit = hit_quad(Quads[node.primitive_index], r, ray_tmin, closest_so_far, temp_rec);
+            }
+            else if (node.primitive_type == 2)  // Volume
+            {
+                hit = hit_volume(Volumes[node.primitive_index], r, ray_tmin, closest_so_far, rng, temp_rec);
+            }
+            
+            if (hit)
             {
                 hit_anything = true;
                 closest_so_far = temp_rec.t;
@@ -369,9 +537,23 @@ float reflectance(float cosine, float ref_idx)
     return r0 + (1.0f - r0) * pow(1.0f - cosine, 5.0f);
 }
 
+// マテリアルの発光色を取得
+float3 emitted(HitRecord rec)
+{
+    if (rec.mat.type == 3)  // 3:DiffuseLight
+    {
+        return get_material_albedo(rec.mat, rec.p, rec.uv);
+    }
+    return float3(0.0f, 0.0f, 0.0f);
+}
+
 bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered, inout uint rng)
 {
-    if (rec.mat.type == 0) // Lambertian
+    if (rec.mat.type == 3)  // DiffuseLight
+    {
+        return false;   // 散乱せずに終了
+    }
+    else if (rec.mat.type == 0) // Lambertian
     {
         float3 scatter_direction = rec.normal + random_uint_vector(rng);
         if (dot(scatter_direction, scatter_direction) < 1e-8f)
@@ -393,7 +575,7 @@ bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered,
         attenuation = get_material_albedo(rec.mat, rec.p, rec.uv);
         return dot(scattered.direction, rec.normal) > 0.0f;
     }
-    else // Dielectric
+    else if (rec.mat.type == 2) // Dielectric
     {
         attenuation = float3(1.0f, 1.0f, 1.0f);
         float ri = rec.front_face ? (1.0f / rec.mat.param) : rec.mat.param;
@@ -414,6 +596,14 @@ bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered,
         scattered.time = r_in.time;
         return true;
     }
+    else //if (rec.mat.type == 4) // Isotropic (Constant Medium)
+    {
+        scattered.origin = rec.p;
+        scattered.direction = random_uint_vector(rng);  // 全方位一様散乱
+        scattered.time = r_in.time;
+        attenuation = rec.mat.albedo;
+        return true;
+    }
 }
 
 // エントリポイント関数。1スレッドグループあたり（8,8,1）スレッドで実行
@@ -428,13 +618,14 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= width || id.y >= height)
         return;
 
-    // スレッド（ピクセル）ごとに固有の乱数シード
-    uint rng = id.x * 1973U + id.y * 9277u + (uint) SamplesPerPixel * 26699u;
+    // パス全体を通じて重複しない一意の乱数シード
+    uint sample_offset = (uint) PassIndex * (uint)SamplesThisPass;
+    uint rng = id.x * 1973U + id.y * 9277u + sample_offset * 26699u;
 
-    float3 total_color = float3(0.0f, 0.0f, 0.0f);
+    float3 pass_color = float3(0.0f, 0.0f, 0.0f);
     
     // マルチサンプリング（アンチエイリアス）ループ
-    for (int s = 0; s < SamplesPerPixel; ++s)
+    for (int s = 0; s < SamplesThisPass; ++s)
     {
         // ピクセル平面上のサンプリング店
         float rx = rand_float(rng) - 0.5f;
@@ -461,8 +652,11 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         for (int bounce = 0; bounce < MaxDepth; ++bounce)
         {
             HitRecord rec = (HitRecord)0;   // ゼロ初期化
-            if (hit_world(cur_ray, 0.001f, 1e9f, rec))
+            if (hit_world(cur_ray, 0.001f, 1e9f, rng, rec))
             {
+                // マテリアルの発光成分を加算
+                sample_color += throughput * emitted(rec);
+                
                 Ray scattered;
                 float3 attenuation;
                 if (scatter(cur_ray, rec, attenuation, scattered, rng))
@@ -478,16 +672,25 @@ void CSMain(uint3 id : SV_DispatchThreadID)
             else
             {
                 // 空に到達
-                float a = 0.5f * (cur_ray.direction.y + 1.0f);
-                float3 sky_color = lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), a);
-                sample_color = throughput * sky_color;
+                if (BackgroundColor.x < 0.0f)
+                {
+                    float a = 0.5f * (cur_ray.direction.y + 1.0f);
+                    float3 sky_color = lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), a);
+                    sample_color += throughput * sky_color; 
+                }
+                else
+                {
+                    // 指定された背景色
+                    sample_color += throughput * BackgroundColor;
+                }
                 break;
             }
         }
-        total_color += sample_color;
+        pass_color += sample_color;
     }
-    
-    // ガンマ補正(gamma 2.0)
-    float3 final_color = sqrt(total_color / (float)SamplesPerPixel);
-    OutputTexture[id.xy] = float4(final_color, 1.0f);
+
+    // 初回パスなら0、2回目以降は前回の蓄積値を読みだして加算
+    float3 prev_color = (PassIndex == 0) ? float3(0.0f, 0.0f, 0.0f) : OutputTexture[id.xy].rgb;
+    // 線形色（リニアカラー）のまま出力バッファへ書き込む
+    OutputTexture[id.xy] = float4(prev_color + pass_color, 1.0f);
 }

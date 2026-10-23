@@ -20,9 +20,12 @@
 #include <vector>
 #include <stdexcept>
 #include <algorithm>
+#include <thread>
 
 // ComPtr を短く書くための記述
 using Microsoft::WRL::ComPtr;
+
+#define FINAL_SCENE_HIGH_DETAIL
 
 // DirectX API の呼び出し結果をチェックするマクロ
 #define CheckHR(hr) if (FAILED(hr)) { throw std::runtime_error("DirectX Error!"); }
@@ -404,6 +407,44 @@ void final_scene(int image_width, int samples_per_pixel, int max_depth) {
     cam.render(world);
 }
 
+// Y軸周りの3D回転ヘルパ
+inline vec3 rotate_vec_y(const vec3& v, double angle_deg) {
+    auto rad = degrees_to_radians(angle_deg);
+    auto sin_theta = std::sin(rad);
+    auto cos_theta = std::cos(rad);
+    return vec3(
+        cos_theta * v.x() + sin_theta * v.z(),
+        v.y(),
+        -sin_theta * v.x() + cos_theta * v.z()
+    );
+}
+
+GpuMaterial make_solid_material(const color& albedo, int type, float param)
+{
+    GpuMaterial mat = {};
+    albedo.copy_to(mat.albedo);
+    mat.type = type;
+    mat.param = param;
+    return mat;
+}
+
+// Spehre作成ヘルパ
+GpuSphere make_gpu_sphere(const point3& center, float radius, const vec3& center_vec, const GpuMaterial& mat)
+{
+    GpuSphere s = {};
+    center.copy_to(s.center);
+    s.radius = radius;
+    center_vec.copy_to(s.center_vec);
+    s.mat = mat;
+    return s;
+}
+
+GpuSphere make_gpu_sphere(const point3& center, float radius, const vec3& center_vec, const color& albedo, int type, float param)
+{
+    auto mat = make_solid_material(albedo, type, param);
+    return make_gpu_sphere(center, radius, center_vec, mat);
+}
+
 // GPU
 GpuAabb compute_sphere_aabb(const GpuSphere& s)
 {
@@ -412,12 +453,108 @@ GpuAabb compute_sphere_aabb(const GpuSphere& s)
     float c0[3] = { s.center[0], s.center[1] , s.center[2] };
     float c1[3] = { s.center[0] + s.center_vec[0],s.center[1] + s.center_vec[1] ,s.center[2] + s.center_vec[2] };
 
-    for(int i = 0; i< 3;i ++) {
+    for (int i = 0; i < 3;i++) {
         bbox.min_point[i] = std::fmin(c0[i], c1[i]) - s.radius;
         bbox.max_point[i] = std::fmax(c0[i], c1[i]) + s.radius;
     }
 
     return bbox;
+}
+
+// Quad作成ヘルパ
+GpuQuad make_gpu_quad(const point3& Q, const vec3& u, const vec3& v, const GpuMaterial& mat)
+{
+    GpuQuad q = {};
+    Q.copy_to(q.Q);
+    u.copy_to(q.u);
+    v.copy_to(q.v);
+
+    auto n = cross(u, v);
+    auto normal = unit_vector(n);
+    normal.copy_to(q.normal);
+    q.D = (float)dot(normal, Q);
+
+    auto w = n / dot(n, n);
+    w.copy_to(q.w);
+    q.mat = mat;
+    return q;
+}
+
+GpuAabb compute_quad_aabb(const GpuQuad& q) {
+    point3 p0 = vec3::convert(q.Q);
+    point3 p1 = p0 + vec3::convert(q.u);
+    point3 p2 = p0 + vec3::convert(q.v);
+    point3 p3 = p0 + vec3::convert(q.u) + vec3::convert(q.v);
+
+    point3 min_p(
+        std::fmin(std::fmin(p0.x(), p1.x()), std::fmin(p2.x(), p3.x())),
+        std::fmin(std::fmin(p0.y(), p1.y()), std::fmin(p2.y(), p3.y())),
+        std::fmin(std::fmin(p0.z(), p1.z()), std::fmin(p2.z(), p3.z()))
+    );
+
+    point3 max_p(
+        std::fmax(std::fmax(p0.x(), p1.x()), std::fmax(p2.x(), p3.x())),
+        std::fmax(std::fmax(p0.y(), p1.y()), std::fmax(p2.y(), p3.y())),
+        std::fmax(std::fmax(p0.z(), p1.z()), std::fmax(p2.z(), p3.z()))
+    );
+
+    // 平面で厚みが0になるのを防ぐ微笑幅パディング
+    GpuAabb bbox = {};
+    const float eps = 0.0001f;
+    for (int i = 0; i < 3; ++i) {
+        bbox.min_point[i] = (float)min_p[i] - eps;
+        bbox.max_point[i] = (float)max_p[i] + eps;
+    }
+
+    return bbox;
+}
+
+GpuAabb compute_box_volume_aabb(const GpuVolume& vol) {
+    point3 bmin(vol.box_min);
+    point3 bmax(vol.box_max);
+    vec3 offset(vol.translation);
+
+    point3 corners[8] = {
+        point3(bmin.x(), bmin.y(), bmin.z()),
+        point3(bmax.x(), bmin.y(), bmin.z()),
+        point3(bmin.x(), bmax.y(), bmin.z()),
+        point3(bmax.x(), bmax.y(), bmin.z()),
+        point3(bmin.x(), bmin.y(), bmax.z()),
+        point3(bmax.x(), bmin.y(), bmax.z()),
+        point3(bmin.x(), bmax.y(), bmax.z()),
+        point3(bmax.x(), bmax.y(), bmax.z())
+    };
+
+    point3 min_p(1e9, 1e9, 1e9);
+    point3 max_p(-1e9, -1e9, -1e9);
+
+    for (int i = 0; i < 8; ++i) {
+        point3 p = rotate_vec_y(corners[i], vol.rotate_y_deg) + offset;
+        min_p = point3(std::fmin(min_p.x(), p.x()), std::fmin(min_p.y(), p.y()), std::fmin(min_p.z(), p.z()));
+        max_p = point3(std::fmax(max_p.x(), p.x()), std::fmax(max_p.y(), p.y()), std::fmax(max_p.z(), p.z()));
+    }
+
+    GpuAabb bbox = {};
+    const float eps = 0.0001f;
+    for (int i = 0; i < 3; ++i) {
+        bbox.min_point[i] = (float)min_p[i] - eps;
+        bbox.max_point[i] = (float)max_p[i] + eps;
+    }
+    return bbox;
+}
+
+GpuAabb compute_volume_aabb(const GpuVolume& vol) {
+    if (vol.shape_type == 0) {  // Sphere
+        GpuAabb bbox = {};
+        for (int i = 0; i < 3; ++i) {
+            bbox.min_point[i] = vol.center[i] - vol.radius;
+            bbox.max_point[i] = vol.center[i] + vol.radius;
+        }
+        return bbox;
+    }
+    else {
+        return compute_box_volume_aabb(vol);
+    }
 }
 
 GpuAabb merge_aabb(const GpuAabb& a, const GpuAabb& b)
@@ -430,6 +567,7 @@ GpuAabb merge_aabb(const GpuAabb& a, const GpuAabb& b)
     return bbox;
 }
 
+#if false
 // BVH構築とフラット化関数
 // 戻り値はフラット配列におけるこのノードのインデックス
 int build_flat_bvh(std::vector<GpuSphere>& spheres, std::vector<int>& indices, int start, int end, std::vector<GpuBvhNode>& flat_nodes)
@@ -485,6 +623,92 @@ int build_flat_bvh(std::vector<GpuSphere>& spheres, std::vector<int>& indices, i
     flat_nodes[current_node_index].bbox = merge_aabb(flat_nodes[left_idx].bbox, flat_nodes[right_idx].bbox);
 
     return current_node_index;
+}
+#else
+int build_flat_bvh_generic(std::vector<PrimitiveRef>& prims, int start, int end, std::vector<GpuBvhNode>& flat_nodes) {
+    int span = end - start;
+    int current_node_index = static_cast<int>(flat_nodes.size());
+    flat_nodes.push_back(GpuBvhNode());
+
+    if (span == 1) {
+        flat_nodes[current_node_index].left_child_index = -1;
+        flat_nodes[current_node_index].right_child_index = -1;
+        flat_nodes[current_node_index].primitive_type = prims[start].type;
+        flat_nodes[current_node_index].primitive_index = prims[start].index;
+        flat_nodes[current_node_index].bbox = prims[start].bbox;
+        return current_node_index;
+    }
+
+    GpuAabb bounds = prims[start].bbox;
+    for (int i = start + 1; i < end; i++) {
+        bounds = merge_aabb(bounds, prims[i].bbox);
+    }
+
+    float extent[3] = {
+        bounds.max_point[0] - bounds.min_point[0],
+        bounds.max_point[1] - bounds.min_point[1],
+        bounds.max_point[2] - bounds.min_point[2]
+    };
+
+    int axis = 0;
+    if (extent[1] > extent[0] && extent[1] > extent[2])
+        axis = 1;
+    else if (extent[2] > extent[0] && extent[2] > extent[1])
+        axis = 2;
+
+    std::sort(prims.begin() + start, prims.begin() + end,
+        [axis](const PrimitiveRef& a, const PrimitiveRef& b) {
+            return a.center[axis] < b.center[axis];
+        });
+
+    int mid = start + span / 2;
+    int left_idx = build_flat_bvh_generic(prims, start, mid, flat_nodes);
+    int right_idx = build_flat_bvh_generic(prims, mid, end, flat_nodes);
+
+    flat_nodes[current_node_index].left_child_index = left_idx;
+    flat_nodes[current_node_index].right_child_index = right_idx;
+    flat_nodes[current_node_index].primitive_type = -1;
+    flat_nodes[current_node_index].primitive_index = -1;
+    flat_nodes[current_node_index].bbox = merge_aabb(flat_nodes[left_idx].bbox, flat_nodes[right_idx].bbox);
+
+    return current_node_index;
+}
+#endif
+
+// 直方体
+void add_box(
+    const point3& a, const point3& b,
+    const GpuMaterial& mat,
+    double angle_deg,
+    const vec3& offset,
+    std::vector<GpuQuad>& quad_scene)
+{
+    point3 min_p(std::fmin(a.x(), b.x()), std::fmin(a.y(), b.y()), std::fmin(a.z(), b.z()));
+    point3 max_p(std::fmax(a.x(), b.x()), std::fmax(a.y(), b.y()), std::fmax(a.z(), b.z()));
+
+    vec3 dx(max_p.x() - min_p.x(), 0, 0);
+    vec3 dy(0, max_p.y() - min_p.y(), 0);
+    vec3 dz(0, 0, max_p.z() - min_p.z());
+
+    struct Face { point3 Q; vec3 u; vec3 v; };
+    Face faces[6] = {
+        { point3(min_p.x(), min_p.y(), max_p.z()),  dx,  dy }, // 手前 (front)
+        { point3(max_p.x(), min_p.y(), max_p.z()), -dz,  dy }, // 右面 (right)
+        { point3(max_p.x(), min_p.y(), min_p.z()), -dx,  dy }, // 奥面 (back)
+        { point3(min_p.x(), min_p.y(), min_p.z()),  dz,  dy }, // 左面 (left)
+        { point3(min_p.x(), max_p.y(), max_p.z()),  dx, -dz }, // 上面 (top)
+        { point3(min_p.x(), min_p.y(), min_p.z()),  dx,  dz }  // 底面 (bottom)
+    };
+
+    for (const auto& f : faces) {
+        // 頂点Qは回転、平衡移動
+        point3 Q_rot = rotate_vec_y(f.Q, angle_deg) + offset;
+        // ベクトルu,vは変位なので回転のみ
+        vec3 u_rot = rotate_vec_y(f.u, angle_deg);
+        vec3 v_rot = rotate_vec_y(f.v, angle_deg);
+
+        quad_scene.push_back(make_gpu_quad(Q_rot, u_rot, v_rot, mat));
+    }
 }
 
 int d3d_exe() {
@@ -567,24 +791,28 @@ int d3d_exe() {
         std::clog << "Compute Shader compiled and created successfully!" << std::endl;
 
         // シェーダーコンパイル確認後に実行
-
-        const UINT image_width = 1200;
-        const UINT image_height = 675;
-        const int samples_per_pixel = 100;
-        const int max_depth = 50;
-
+#ifdef FINAL_SCENE_HIGH_DETAIL
+        const UINT image_width = 800;
+        const UINT image_height = 800;
+        const int total_samples = 10000;
+        const int max_depth = 40;
+#else
+        const UINT image_width = 400;
+        const UINT image_height = 400;
+        const int total_samples = 250;
+        const int max_depth = 4;
+#endif
+        const int samples_per_pass = 50;
+        const int num_pass = total_samples / samples_per_pass;
         // --------------------------------------------------------------------------
         // シーン配置物
         // --------------------------------------------------------------------------
+#if false
         std::vector<GpuSphere> scene;
 
 #if false
         // 地面 (静止)
-        scene.push_back({
-            {0.0f, -1000.0f, 0.0f}, 1000.0f,
-            {0.0f, 0.0f, 0.0f}, 0.0f,
-            { {0.5f, 0.5f, 0.5f}, 0, 0.0f }
-            });
+        scene.push_back(make_gpu_sphere({ 0.0f, -1000.0f, 0.0f }, 1000.0f, { 0.0f, 0.0f, 0.0f }, { 0.5f, 0.5f, 0.5f }, 0, 0.0f));
 
         // ランダムな小球体群
         for (int a = -11; a < 11; a++) {
@@ -598,43 +826,27 @@ int d3d_exe() {
                         auto albedo = color::random() * color::random();
                         auto center2 = center + vec3(0, random_double(0, 0.5), 0);
                         vec3 center_vec = center2 - center;
-                        scene.push_back({
-                            {(float)center.x(), (float)center.y(), (float)center.z()},
-                            0.2f,
-                            {(float)center_vec.x(), (float)center_vec.y(), (float)center_vec.z()},
-                            0.0f,
-                            { {(float)albedo.x(), (float)albedo.y(), (float)albedo.z()}, 0, 0.0f }
-                         });
+                        scene.push_back(make_gpu_sphere(center, 0.2f, center_vec, albedo, 0, 0.0f));
                     }
                     else if (choose_mat < 0.95) {
                         // 金属 (Metal)
                         auto albedo = color::random(0.5, 1);
                         auto fuzz = (float)random_double(0, 0.5);
-                        scene.push_back({
-                            {(float)center.x(), (float)center.y(), (float)center.z()},
-                            0.2f,
-                            {0.0f, 0.0f, 0.0f}, 0.0f,
-                            { {(float)albedo.x(), (float)albedo.y(), (float)albedo.z()}, 1, fuzz }
-                        });
+                        scene.push_back(make_gpu_sphere(center, 0.2f, { 0.0f, 0.0f, 0.0f }, albedo, 1, fuzz));
                     }
                     else {
                         // ガラス (Dielectric)
-                        scene.push_back({
-                            {(float)center.x(), (float)center.y(), (float)center.z()},
-                            0.2f,
-                            {0.0f, 0.0f, 0.0f}, 0.0f,
-                            { {1.0f, 1.0f, 1.0f}, 2, 1.5f }
-                        });
+                        scene.push_back(make_gpu_sphere(center, 0.2f, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 2, 1.5f));
                     }
                 }
             }
         }
 
         // 3つの大球体
-        scene.push_back({ {0.0f, 1.0f, 0.0f}, 1.0f,  {0.0f, 0.0f, 0.0f}, 0.0f, { {1.0f, 1.0f, 1.0f}, 2, 1.5f } }); // ガラス
-        scene.push_back({ {-4.0f, 1.0f, 0.0f}, 1.0f, {0.0f, 0.0f, 0.0f}, 0.0f, { {0.4f, 0.2f, 0.1f}, 0, 0.0f } }); // 拡散
-        scene.push_back({ {4.0f, 1.0f, 0.0f}, 1.0f,  {0.0f, 0.0f, 0.0f}, 0.0f, { {0.7f, 0.6f, 0.5f}, 1, 0.0f } }); // 金属
-#elseif false
+        scene.push_back(make_gpu_sphere({0.0f, 1.0f, 0.0f},  1.0f, {0.0f, 0.0f, 0.0f}, { 1.0f, 1.0f, 1.0f}, 2, 1.5f)); // ガラス
+        scene.push_back(make_gpu_sphere({-4.0f, 1.0f, 0.0f}, 1.0f, {0.0f, 0.0f, 0.0f}, { 0.4f, 0.2f, 0.1f}, 0, 0.0f)); // 拡散
+        scene.push_back(make_gpu_sphere({4.0f, 1.0f, 0.0f},  1.0f, {0.0f, 0.0f, 0.0f}, { 0.7f, 0.6f, 0.5f}, 1, 0.0f)); // 金属
+#elif false
         GpuMaterial checker_mat = {};
         checker_mat.type = 0;
         checker_mat.text_type = 1;
@@ -658,7 +870,7 @@ int d3d_exe() {
             {0.0f, 0.0f, 0.0f}, 0.0f,
             checker_mat
             });
-#elseif false
+#elif false
         GpuMaterial earth_mat = {};
         earth_mat.type = 0;       // Lambertian
         earth_mat.text_type = 2;  // 2: Image Texture
@@ -669,7 +881,7 @@ int d3d_exe() {
             {0.0f, 0.0f, 0.0f}, 0.0f,
             earth_mat
             });
-#else
+#elif false
         GpuMaterial perlin_mat = {};
         perlin_mat.type = 0;        // Lambertian
         perlin_mat.text_type = 3;   // 3: Perlin Marble
@@ -679,18 +891,9 @@ int d3d_exe() {
         perlin_mat.albedo[2] = 1.0f;
         
         // 地面の巨大球 (半径 1000)
-        scene.push_back({
-            {0.0f, -1000.0f, 0.0f}, 1000.0f,
-            {0.0f, 0.0f, 0.0f}, 0.0f,
-            perlin_mat
-            });
-        
+        scene.push_back(make_gpu_sphere({ 0.0f, -1000.0f, 0.0f }, 1000.0f, { 0.0f, 0.0f, 0.0f }, perlin_mat));
         // 浮遊球 (半径 2)
-        scene.push_back({
-            {0.0f, 2.0f, 0.0f}, 2.0f,
-            {0.0f, 0.0f, 0.0f}, 0.0f,
-            perlin_mat
-            });
+        scene.push_back(make_gpu_sphere({ 0.0f, 2.0f, 0.0f}, 2.0f, {0.0f, 0.0f, 0.0f}, perlin_mat));
 #endif
         // --------------------------------------------------------------------------
         // BVHの構築とフラット化
@@ -701,7 +904,234 @@ int d3d_exe() {
         std::vector<GpuBvhNode> bvh_nodes;
         // ルートノードから構築を開始（戻り値は常に0になるはず）
         build_flat_bvh(scene, sphere_indices, 0, static_cast<int>(scene.size()), bvh_nodes);
+#elif false
+        // 球体バッファ(サイズ0回避のためにダミーを1要素配置)
+        std::vector<GpuSphere> sphere_scene;
+        sphere_scene.push_back({});
 
+        // 四角形のシーン構築
+        std::vector<GpuQuad> quad_scene;
+
+        // 教科書通りの 5 枚の四角形
+        quad_scene.push_back(make_gpu_quad(point3(-3, -2, 5), vec3(0, 0, -4), vec3(0, 4,  0), make_solid_material({ 1.0f, 0.2f, 0.2f }, 0, 0))); // 左: 赤
+        quad_scene.push_back(make_gpu_quad(point3(-2, -2, 0), vec3(4, 0,  0), vec3(0, 4,  0), make_solid_material({ 0.2f, 1.0f, 0.2f }, 0, 0))); // 奥: 緑
+        quad_scene.push_back(make_gpu_quad(point3( 3, -2, 1), vec3(0, 0,  4), vec3(0, 4,  0), make_solid_material({ 0.2f, 0.2f, 1.0f }, 0, 0))); // 右: 青
+        quad_scene.push_back(make_gpu_quad(point3(-2,  3, 1), vec3(4, 0,  0), vec3(0, 0,  4), make_solid_material({ 1.0f, 0.5f, 0.0f }, 0, 0))); // 上: 橙
+        quad_scene.push_back(make_gpu_quad(point3(-2, -3, 5), vec3(4, 0,  0), vec3(0, 0, -4), make_solid_material({ 0.2f, 0.8f, 0.8f }, 0, 0))); // 下: 青緑
+
+        // BVH用参照リストの作成（Quadを登録）
+        std::vector<PrimitiveRef> prim_refs;
+        for (size_t i = 0; i < quad_scene.size(); ++i) {
+            PrimitiveRef ref;
+            ref.type = 1;       // Quad
+            ref.index = static_cast<int>(i);
+            ref.bbox = compute_quad_aabb(quad_scene[i]);
+            ref.center[0] = (ref.bbox.min_point[0] + ref.bbox.max_point[0]) * 0.5f;
+            ref.center[1] = (ref.bbox.min_point[1] + ref.bbox.max_point[1]) * 0.5f;
+            ref.center[2] = (ref.bbox.min_point[2] + ref.bbox.max_point[2]) * 0.5f;
+            prim_refs.push_back(ref);
+        }
+
+        std::vector<GpuBvhNode> bvh_nodes;
+        build_flat_bvh_generic(prim_refs, 0, static_cast<int>(prim_refs.size()), bvh_nodes);
+
+        auto scene = sphere_scene;
+#elif true
+        // sample_light()シーンの構築
+        std::vector<GpuSphere> sphere_scene;
+        std::vector<GpuQuad> quad_scene;
+        std::vector<GpuVolume> volume_scene;
+#if false
+        // マテリアル定義
+        GpuMaterial perlin_mat = {};
+        perlin_mat.type = 0;        // Lambertian
+        perlin_mat.text_type = 3;   // Perlin Marble
+        perlin_mat.scale = 4.0f;
+        color(1.0f, 1.0f, 1.0f).copy_to(perlin_mat.albedo);
+
+        GpuMaterial light_sphere_mat = {};
+        light_sphere_mat.type = 3;  // 3: DiffuseLight
+        color(0.2f, 0.2f, 0.8f).copy_to(light_sphere_mat.albedo);   // 青白い弱光
+
+        GpuMaterial light_quad_mat = {};
+        light_quad_mat.type = 3;    // 3: DiffuseLight
+        color(4.0f, 4.0f, 4.0f).copy_to(light_quad_mat.albedo);     // 白い強光
+
+        // 球体 3 つ
+        // 1. 地面の大理石球
+        sphere_scene.push_back(make_gpu_sphere({0.0f, -1000.0f, 0.0f}, 1000.0f, {0.0f, 0.0f, 0.0f}, perlin_mat));
+        // 2. 中央の大理石球
+        sphere_scene.push_back(make_gpu_sphere({0.0f, 2.0f, 0.0f}, 2.0f, {0.0f, 0.0f, 0.0f}, perlin_mat));
+        // 3. 上空の発光球体ライト
+        sphere_scene.push_back(make_gpu_sphere({ 0.0f, 7.0f, 0.0f }, 2.0f, { 0.0f, 0.0f, 0.0f }, light_sphere_mat));
+
+        // 四角形 1 つ（手前の高輝度ライトパネル）
+        quad_scene.push_back(make_gpu_quad(
+            point3(2, 1, -2), vec3(2, 0, 0), vec3(0, 2, 0), light_quad_mat
+        ));
+#elif false
+
+        // 球体バッファ (サイズ 0 回避のダミー)
+        sphere_scene.push_back({});
+
+        GpuMaterial red = make_solid_material({ 0.65f, 0.05f, 0.05f }, 0, 0);
+        GpuMaterial white = make_solid_material({ 0.73f, 0.73f, 0.73f }, 0, 0);
+        GpuMaterial green = make_solid_material({ 0.12f, 0.45f, 0.15f }, 0, 0);
+
+        GpuMaterial light = make_solid_material({ 15.0f, 15.0f, 15.0f }, 3, 0);
+
+        // 1. コーネルボックスの外壁 (5面) と天井ライト (1面)
+        quad_scene.push_back(make_gpu_quad(point3(555, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), green)); // 右壁 (緑)
+        quad_scene.push_back(make_gpu_quad(point3(0, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), red));   // 左壁 (赤)
+        quad_scene.push_back(make_gpu_quad(point3(343, 554, 332), vec3(-130, 0, 0), vec3(0, 0, -105), light)); // 天井ライト
+        quad_scene.push_back(make_gpu_quad(point3(0, 0, 0), vec3(555, 0, 0), vec3(0, 0, 555), white)); // 床
+        quad_scene.push_back(make_gpu_quad(point3(555, 555, 555), vec3(-555, 0, 0), vec3(0, 0, -555), white)); // 天井
+        quad_scene.push_back(make_gpu_quad(point3(0, 0, 555), vec3(555, 0, 0), vec3(0, 555, 0), white)); // 奥壁
+
+#if false
+        // 箱の追加
+        add_box(point3(0, 0, 0), point3(165, 330, 165), white, 15.0, vec3(265, 0, 295), quad_scene);
+
+        add_box(point3(0, 0, 0), point3(165, 165, 165), white, -18.0, vec3(130, 0, 65), quad_scene);
+#else
+        GpuVolume smoke1 = {};
+        smoke1.shape_type = 1;
+        smoke1.density = 0.01f;
+        color(0, 0, 0).copy_to(smoke1.albedo);
+        point3(0, 0, 0).copy_to(smoke1.box_min);
+        point3(165, 330, 165).copy_to(smoke1.box_max);
+        smoke1.rotate_y_deg = 15.0f;
+        vec3(265, 0, 295).copy_to(smoke1.translation);
+        volume_scene.push_back(smoke1);
+
+        GpuVolume smoke2 = {};
+        smoke2.shape_type = 1; // Box
+        smoke2.density = 0.01f;
+        color(1.0, 1.0, 1.0).copy_to(smoke2.albedo);
+        point3(0, 0, 0).copy_to(smoke2.box_min);
+        point3(165, 165, 165).copy_to(smoke2.box_max);
+        smoke2.rotate_y_deg = -18.0f;
+        vec3(130, 0, 65).copy_to(smoke2.translation);
+        volume_scene.push_back(smoke2);
+#endif
+#elif true
+        // -------------------------------------------------------------
+        // 1. 地面のランダムな高さの直方体群 (20x20 = 400個のBox = 2400枚のQuad)
+        // -------------------------------------------------------------
+        GpuMaterial ground_mat = make_solid_material({ 0.48f, 0.83f, 0.53f }, 0, 0.0f);
+        int boxes_per_side = 20;
+        for (int i = 0; i < boxes_per_side; ++i) {
+            for (int j = 0; j < boxes_per_side; ++j) {
+                auto w = 100.0;
+                auto x0 = -1000.0 + i * w;
+                auto z0 = -1000.0 + j * w;
+                auto y0 = 0.0;
+                auto x1 = x0 + w;
+                auto y1 = random_double(1, 101);
+                auto z1 = z0 + w;
+
+                add_box(point3(x0, y0, z0), point3(x1, y1, z1), ground_mat, 0.0, vec3(0, 0, 0), quad_scene);
+            }
+        }
+
+        // -------------------------------------------------------------
+        // 2. 天井の面光源 (Quad)
+        // -------------------------------------------------------------
+        GpuMaterial light_mat = make_solid_material({ 7.0f, 7.0f, 7.0f }, 3, 0.0f);
+        quad_scene.push_back(make_gpu_quad(point3(123, 554, 147), vec3(300, 0, 0), vec3(0, 0, 265), light_mat));
+
+        // -------------------------------------------------------------
+        // 3. 各種オブジェクト球体群
+        // -------------------------------------------------------------
+        // モーションブラー球体 (茶色)
+        GpuMaterial orange_mat = make_solid_material({ 0.7f, 0.3f, 0.1f }, 0, 0.0f);
+        point3 center1(400, 400, 200);
+        vec3   center_vec(30, 0, 0);
+        sphere_scene.push_back(make_gpu_sphere(center1, 50.0f, center_vec, orange_mat));
+
+        // ガラス球体 (屈折率 1.5)
+        GpuMaterial glass_mat = make_solid_material({ 1.0f, 1.0f, 1.0f }, 2, 1.5f);
+        sphere_scene.push_back(make_gpu_sphere(point3(260, 150, 45), 50.0f, vec3(0, 0, 0), glass_mat));
+
+        // 金属球体 (粗さ 1.0)
+        GpuMaterial metal_mat = make_solid_material({ 0.8f, 0.8f, 0.9f }, 1, 1.0f);
+        sphere_scene.push_back(make_gpu_sphere(point3(0, 150, 145), 50.0f, vec3(0, 0, 0), metal_mat));
+
+        // 青いガラス球 (外殻)
+        sphere_scene.push_back(make_gpu_sphere(point3(360, 150, 145), 70.0f, vec3(0, 0, 0), glass_mat));
+
+        // 地球儀 (画像テクスチャ)
+        GpuMaterial earth_mat = {};
+        earth_mat.type = 0;
+        earth_mat.text_type = 2; // Image
+        sphere_scene.push_back(make_gpu_sphere(point3(400, 200, 400), 100.0f, vec3(0, 0, 0), earth_mat));
+
+        // パーリン大理石球 (スケール 0.2)
+        GpuMaterial pertext_mat = {};
+        pertext_mat.type = 0;
+        pertext_mat.text_type = 3; // Perlin Marble
+        pertext_mat.scale = 0.2f;
+        pertext_mat.albedo[0] = 1.0f; pertext_mat.albedo[1] = 1.0f; pertext_mat.albedo[2] = 1.0f;
+        sphere_scene.push_back(make_gpu_sphere(point3(220, 280, 300), 80.0f, vec3(0, 0, 0), pertext_mat));
+
+        // -------------------------------------------------------------
+        // 4. 小さな白い球体群のクラスター (1000個の小球を回転・移動して配置)
+        // -------------------------------------------------------------
+        GpuMaterial white = make_solid_material({ 0.73f, 0.73f, 0.73f }, 0, 0.0f);
+        int ns = 1000;
+        for (int j = 0; j < ns; ++j) {
+            point3 p(random_double(0, 165), random_double(0, 165), random_double(0, 165));
+            point3 p_trans = rotate_vec_y(p, 15.0) + vec3(-100, 270, 395);
+            sphere_scene.push_back(make_gpu_sphere(p_trans, 10.0f, vec3(0, 0, 0), white));
+        }
+
+        // -------------------------------------------------------------
+        // 5. 参加媒質ボリューム群
+        // -------------------------------------------------------------
+        // 青いガラス球の内部の青い煙 (density = 0.2)
+        GpuVolume blue_smoke = {};
+        blue_smoke.shape_type = 0; // Sphere
+        blue_smoke.density = 0.2f;
+        color(0.2f, 0.4f, 0.9f).copy_to(blue_smoke.albedo);
+        point3(360, 150, 145).copy_to(blue_smoke.center);
+        blue_smoke.radius = 70.0f;
+        volume_scene.push_back(blue_smoke);
+
+        // 空間全体を包む薄い白い霧 (density = 0.0001, 半径 5000)
+        GpuVolume world_fog = {};
+        world_fog.shape_type = 0; // Sphere
+        world_fog.density = 0.0001f;
+        color(1.0f, 1.0f, 1.0f).copy_to(world_fog.albedo);
+        point3(0, 0, 0).copy_to(world_fog.center);
+        world_fog.radius = 5000.0f;
+        volume_scene.push_back(world_fog);
+#endif
+        // BVH用参照リストの統合
+        std::vector<PrimitiveRef> prim_refs;
+        for (size_t i = 0; i < sphere_scene.size(); ++i) {
+           prim_refs.emplace_back(
+               0,   // Sphere
+               static_cast<int>(i),
+               compute_sphere_aabb(sphere_scene[i]));
+        }
+        for (size_t i = 0; i < quad_scene.size(); ++i) {
+            prim_refs.emplace_back(
+                1,  // Quad
+                static_cast<int>(i),
+                compute_quad_aabb(quad_scene[i]));
+        }
+        for (size_t i = 0; i < volume_scene.size(); ++i) {
+            prim_refs.emplace_back(
+                2,  // Volume
+                static_cast<int>(i),
+                compute_volume_aabb(volume_scene[i]));
+        }
+
+        std::vector<GpuBvhNode> bvh_nodes;
+        build_flat_bvh_generic(prim_refs, 0, static_cast<int>(prim_refs.size()), bvh_nodes);
+
+        auto scene = sphere_scene;
+#endif
         // --------------------------------------------------------------------------
         // 描画準備
         // --------------------------------------------------------------------------
@@ -850,15 +1280,67 @@ int d3d_exe() {
         hr = device->CreateShaderResourceView(imageTex.Get(), nullptr, &imageSRV);
         CheckHR(hr);
 
-        // カメラパラメータの計算
-        point3 lookfrom(13, 2, 3);
-        point3 lookat(0, 0, 0);
-        vec3 vup(0,1,0);
+        // --------------------------------------------------------------------------
+        // StructureBufferとSRVの作成 Quad(t3)
+        // --------------------------------------------------------------------------
+        D3D11_BUFFER_DESC quadDesc = {};
+        quadDesc.ByteWidth = static_cast<UINT>(sizeof(GpuQuad) * quad_scene.size());
+        quadDesc.Usage = D3D11_USAGE_DEFAULT;
+        quadDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        quadDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        quadDesc.StructureByteStride = sizeof(GpuQuad);
 
-        double vfov = 20.0;
+        D3D11_SUBRESOURCE_DATA quadInit = {};
+        quadInit.pSysMem = quad_scene.data();
+
+        ComPtr<ID3D11Buffer> quadBuffer;
+        hr = device->CreateBuffer(&quadDesc, &quadInit, &quadBuffer);
+        CheckHR(hr);
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC quadSrvDesc = {};
+        quadSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        quadSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        quadSrvDesc.Buffer.FirstElement = 0;
+        quadSrvDesc.Buffer.NumElements = static_cast<UINT>(quad_scene.size());
+
+        ComPtr<ID3D11ShaderResourceView> quadSRV;
+        hr = device->CreateShaderResourceView(quadBuffer.Get(), &quadSrvDesc, &quadSRV);
+
+        // --------------------------------------------------------------------------
+        // StructureBufferとSRVの作成 Quad(t4)
+        // --------------------------------------------------------------------------
+        D3D11_BUFFER_DESC volDesc = {};
+        volDesc.ByteWidth = static_cast<UINT>(sizeof(GpuVolume) * volume_scene.size());
+        volDesc.Usage = D3D11_USAGE_DEFAULT;
+        volDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        volDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        volDesc.StructureByteStride = sizeof(GpuVolume);
+
+        D3D11_SUBRESOURCE_DATA volInit = {};
+        volInit.pSysMem = volume_scene.data();
+
+        ComPtr<ID3D11Buffer> volBuffer;
+        hr = device->CreateBuffer(&volDesc, &volInit, &volBuffer);
+        CheckHR(hr);
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC volSrvDesc = {};
+        volSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        volSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        volSrvDesc.Buffer.FirstElement = 0;
+        volSrvDesc.Buffer.NumElements = static_cast<UINT>(volume_scene.size());
+
+        ComPtr<ID3D11ShaderResourceView> volumeSRV;
+        hr = device->CreateShaderResourceView(volBuffer.Get(), &volSrvDesc, &volumeSRV);
+        CheckHR(hr);
+#if true
+        point3 lookfrom(478, 278, -600);
+        point3 lookat(278, 278, 0);
+        vec3   vup(0, 1, 0);
+
+        double vfov = 40.0;
         double defocus_angle = 0.0;
         double focus_dist = 10.0;
-
+#endif
         auto theta = degrees_to_radians(vfov);
         auto h = std::tan(theta / 2.0);
         auto viewport_height = 2.0 * h * focus_dist;
@@ -883,33 +1365,21 @@ int d3d_exe() {
 
         // バッファ転送用データに格納
         CameraBufferData cbData = {};
-        cbData.camera_center[0] = (float)lookfrom.x();
-        cbData.camera_center[1] = (float)lookfrom.y();
-        cbData.camera_center[2] = (float)lookfrom.z();
-        cbData.num_spheres = static_cast<int>(scene.size());
+        lookfrom.copy_to(cbData.camera_center);
+        pixel00_loc.copy_to(cbData.pixel00_loc);
 
-        cbData.pixel00_loc[0] = (float)pixel00_loc.x();
-        cbData.pixel00_loc[1] = (float)pixel00_loc.y();
-        cbData.pixel00_loc[2] = (float)pixel00_loc.z();
-        cbData.samples_per_pixel = samples_per_pixel;
+        cbData.samples_this_pass = samples_per_pass;
 
-        cbData.pixel_delta_u[0] = (float)pixel_delta_u.x();
-        cbData.pixel_delta_u[1] = (float)pixel_delta_u.y();
-        cbData.pixel_delta_u[2] = (float)pixel_delta_u.z();
+        pixel_delta_u.copy_to(cbData.pixel_delta_u);
         cbData.max_depth = max_depth;
 
-        cbData.pixel_delta_v[0] = (float)pixel_delta_v.x();
-        cbData.pixel_delta_v[1] = (float)pixel_delta_v.y();
-        cbData.pixel_delta_v[2] = (float)pixel_delta_v.z();
+        pixel_delta_v.copy_to(cbData.pixel_delta_v);
         cbData.defocus_angle = (float)defocus_angle;
 
-        cbData.defocus_disk_u[0] = (float)defocus_disk_u.x();
-        cbData.defocus_disk_u[1] = (float)defocus_disk_u.y();
-        cbData.defocus_disk_u[2] = (float)defocus_disk_u.z();
+        defocus_disk_u.copy_to(cbData.defocus_disk_u);
+        defocus_disk_v.copy_to(cbData.defocus_disk_v);
 
-        cbData.defocus_disk_v[0] = (float)defocus_disk_v.x();
-        cbData.defocus_disk_v[1] = (float)defocus_disk_v.y();
-        cbData.defocus_disk_v[2] = (float)defocus_disk_v.z();
+        color(0, 0, 0).copy_to(cbData.background);
 
         // 定数バッファの作成
         D3D11_BUFFER_DESC cbDesc = {};
@@ -969,9 +1439,15 @@ int d3d_exe() {
         // シェーダーをスロット0にバインド
         context->CSSetShader(computeShader.Get(), nullptr, 0);
 
-        // SRV（球体バッファ:t0）とSRV（BVHバッファ:t1）をバインド
-        ID3D11ShaderResourceView* srvArray[] = { sphereSRV.Get(), bvhSRV.Get(), imageSRV.Get()};
-        context->CSSetShaderResources(0, 3, srvArray);
+        // SRVを全てバインド
+        ID3D11ShaderResourceView* srvArray[] = {
+            sphereSRV.Get(),
+            bvhSRV.Get(),
+            imageSRV.Get(),
+            quadSRV.Get(),
+            volumeSRV.Get(),
+        };
+        context->CSSetShaderResources(0, 5, srvArray);
 
         // サンプラーをセット
         ID3D11SamplerState* samplerArray[] = { linearSampler.Get() };
@@ -984,10 +1460,47 @@ int d3d_exe() {
         ID3D11UnorderedAccessView* uavArray[] = { uav.Get() };
         context->CSSetUnorderedAccessViews(0, 1, uavArray, nullptr);
 
+        // GPU同期用イベントクエリの作成
+        D3D11_QUERY_DESC queryDesc = {};
+        queryDesc.Query = D3D11_QUERY_EVENT;
+        ComPtr<ID3D11Query> query;
+        hr = device->CreateQuery(&queryDesc, &query);
+        CheckHR(hr);
+
         // スレッドグループ数を計算（1グループあたり8x8 = 64スレッド）
         UINT dispatchX = (image_width + 7) / 8;
         UINT dispatchY = (image_height + 7) / 8;
-        context->Dispatch(dispatchX, dispatchY, 1);
+
+        std::clog << "Rendering Final Scene (" << total_samples << " samples)...\n";
+
+        for (int pass = 0; pass < num_pass; ++pass) {
+            // パス番号を定数バッファに更新
+            cbData.pass_index = pass;
+            context->UpdateSubresource(cameraBuffer.Get(), 0, nullptr, &cbData, 0, 0);
+
+            // 1パス分(50サンプル)を実行
+            context->Dispatch(dispatchX, dispatchY, 1);
+
+            // GPUにイベントを発行し、このパスの完了を待機
+            context->End(query.Get());
+            while (context-> GetData(query.Get(), nullptr, 0, 0) == S_FALSE) {
+                // 1ミリ秒スリープ
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
+            // 進捗の計算
+            auto current_time = std::chrono::high_resolution_clock::now();
+            double elapsed = std::chrono::duration<double>(current_time - start_time).count();
+            double progress = (double)(pass + 1) / num_pass;
+            double eta = (elapsed / progress) - elapsed;
+
+            std::clog << "\rPass " << (pass + 1) << "/" << num_pass
+                      << "[" << static_cast<int>(progress * 100.0) << "%]"
+                      << "Elapsed: " << static_cast<int>(elapsed) << "s "
+                      << "ETA: " << static_cast<int>(eta) << "s   " << std::flush;
+        }
+
+        std::clog << "\nRendering finished! Transferring to CPU...\n";
 
         // 使用したリソースのバインドを解除（後続の安全のため）
         ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
@@ -1015,12 +1528,22 @@ int d3d_exe() {
         for (UINT y = 0; y < image_height; ++y) {
             const float* pixel = reinterpret_cast<const float*>(rowPtr);
             for (UINT x = 0; x < image_width; x++) {
+#if false
                 // float4 (R, G, B, A)を取得して0～255に変換
                 int r = static_cast<int>(255.999f * pixel[0]);
                 int g = static_cast<int>(255.999f * pixel[1]);
                 int b = static_cast<int>(255.999f * pixel[2]);
 
                 std::cout << r << ' ' << g << ' ' << b << '\n';
+#else
+                // 合計輝度を総サンプル数で割って平均化
+                color pixel_color(
+                    pixel[0] / static_cast<float>(total_samples),
+                    pixel[1] / static_cast<float>(total_samples),
+                    pixel[2] / static_cast<float>(total_samples)
+                );
+                write_color(std::cout, pixel_color);
+#endif
                 pixel += 4; // 次のピクセル（float4分進める）
             }
             rowPtr += mapped.RowPitch;
