@@ -496,13 +496,13 @@ SceneConfig scene_cornell_smoke() {
 // 第10章: 最終シーン
 SceneConfig scene_final_scene(bool high_detail = false) {
     SceneConfig sc;
-    sc.name = high_detail ? "Final Scene (10000 samples)" : "Final Scene (Preview)";
     sc.texture_filename = "earthmap.jpg";
-    sc.image_width = 800;
-    sc.image_height = 800;
-    sc.total_samples = high_detail ? 10000 : 250;
+    sc.image_width = high_detail ? 800 : 400;
+    sc.image_height = high_detail ? 800 : 400;
+    sc.total_samples = high_detail ? 1000 : 250;
+    sc.name = "Finale Scene (width:" + std::to_string(sc.image_width) + ", height:" + std::to_string(sc.image_height) + ")";
     sc.samples_per_pass = 50;
-    sc.max_depth = 40;
+    sc.max_depth = high_detail ? 40 : 4;
     sc.vfov = 40.0;
     sc.lookfrom = point3(478, 278, -600);
     sc.lookat = point3(278, 278, 0);
@@ -879,9 +879,9 @@ int run_gpu_renderer(const SceneConfig sc) {
     ID3D11UnorderedAccessView* uavArray[] = { uav.Get() };
     context->CSSetUnorderedAccessViews(0, 1, uavArray, nullptr);
 
-    // スレッドグループ数を計算（1グループあたり8x8 = 64スレッド）
-    UINT dispatchX = (sc.image_width + 7) / 8;
-    UINT dispatchY = (sc.image_height + 7) / 8;
+    // スレッドグループ数を計算（1グループあたり16x16 = 256スレッド）
+    UINT dispatchX = (sc.image_width + 15) / 16;
+    UINT dispatchY = (sc.image_height + 15) / 16;
     int num_pass = sc.total_samples / sc.samples_per_pass;
 
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -914,7 +914,9 @@ int run_gpu_renderer(const SceneConfig sc) {
             << "ETA: " << static_cast<int>(eta) << "s   " << std::flush;
     }
 
-    std::clog << "\nRendering finished! Transferring to CPU...\n";
+    auto gpu_end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> gpu_time = gpu_end - start_time;
+    std::clog << "\nRendering finished! [GPU Compute Time: " << gpu_time.count() << " s]\n";
 
     // 使用したリソースのバインドを解除（後続の安全のため）
     ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
@@ -973,7 +975,7 @@ int main() {
         // 8: Cornell Smoke
         // 9: Final Scene (Preview 250 samples)
         // 10: Final Scene (High Detail 10,000 samples)
-        int scene_id = 9;
+        int scene_id = 10;
 
         SceneConfig sc;
         switch (scene_id) {

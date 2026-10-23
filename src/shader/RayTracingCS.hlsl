@@ -323,16 +323,16 @@ bool hit_sphere(Sphere s, Ray r, float ray_tmin, float ray_tmax, inout HitRecord
 }
 
 // 光線とAABBの交差点（スラブ法）
-bool hit_aabb(Aabb box, Ray r, float ray_tmin, float ray_tmax)
+bool hit_aabb(Aabb box, Ray r, float3 inv_d, float ray_tmin, float ray_tmax)
 {
     [unroll]
     for (int a = 0; a < 3; ++a)
     {
-        float invD = 1.0f / r.direction[a];
-        float t0 = (box.min_point[a] - r.origin[a]) * invD;
-        float t1 = (box.max_point[a] - r.origin[a]) * invD;
+        //float invD = 1.0f / r.direction[a];
+        float t0 = (box.min_point[a] - r.origin[a]) * inv_d[a];
+        float t1 = (box.max_point[a] - r.origin[a]) * inv_d[a];
 
-        if (invD < 0.0f)
+        if (inv_d[a] < 0.0f)
         {
             float tmp = t0;
             t0 = t1;
@@ -469,8 +469,17 @@ bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitR
     bool hit_anything = false;
     float closest_so_far = ray_tmax;
 
+    // 【追加】レイの逆数方向を探索開始時に1度だけ計算（ゼロ除算・NaN対策）
+    float3 inv_d = float3(
+        abs(r.direction.x) > 1e-8f ? 1.0f / r.direction.x : (r.direction.x >= 0 ? 1e8f : -1e8f),
+        abs(r.direction.y) > 1e-8f ? 1.0f / r.direction.y : (r.direction.y >= 0 ? 1e8f : -1e8f),
+        abs(r.direction.z) > 1e-8f ? 1.0f / r.direction.z : (r.direction.z >= 0 ? 1e8f : -1e8f)
+    );
+    
     // GPUローカルメモリにスタックを確保（深さ64あれば数万個のオブジェクトに対応可能）
-    int stack[64];
+    // スクラッチメモリのスピルを抑えるためサイズを 20 に設定
+    static const int stack_size = 20;
+    int stack[stack_size];
     int stack_ptr = 0;
     
     // ルートノード
@@ -482,7 +491,7 @@ bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitR
         BvhNode node = BvhNodes[node_idx];
 
         // ノードのAABBに当たらなければこのノードおよびその配下はスキップ
-        if (!hit_aabb(node.bbox, r, ray_tmin, closest_so_far))
+        if (!hit_aabb(node.bbox, r, inv_d, ray_tmin, closest_so_far))
             continue;
 
         if (node.primitive_type >= 0)
@@ -514,7 +523,7 @@ bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitR
             // 内部ノードの場合、node.sphere_index = -1が与えられる
             // 内部ノード(Branch):子ノードをスタックに積む
             // （手前の子から探索できるよう、right->leftの順にPush）
-            if (stack_ptr < 62)
+            if (stack_ptr <= stack_size - 2)
             {
                 if (node.right_child_index >= 0)
                     stack[stack_ptr++] = node.right_child_index;
@@ -606,8 +615,8 @@ bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered,
     }
 }
 
-// エントリポイント関数。1スレッドグループあたり（8,8,1）スレッドで実行
-[numthreads(8, 8, 1)]
+// エントリポイント関数。1スレッドグループあたり（16,16,1）スレッドで実行
+[numthreads(16, 16, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
     // 出力テクスチャの解像度を取得
