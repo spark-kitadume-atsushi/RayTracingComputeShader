@@ -493,16 +493,37 @@ SceneConfig scene_cornell_smoke() {
     return sc;
 }
 
-// 第10章: 最終シーン
-SceneConfig scene_final_scene(bool high_detail = false) {
+// 第10章: 最終シーン level:0,1,2
+SceneConfig scene_final_scene(int level) {
     SceneConfig sc;
     sc.texture_filename = "earthmap.jpg";
-    sc.image_width = high_detail ? 800 : 400;
-    sc.image_height = high_detail ? 800 : 400;
-    sc.total_samples = high_detail ? 1000 : 250;
-    sc.name = "Finale Scene (width:" + std::to_string(sc.image_width) + ", height:" + std::to_string(sc.image_height) + ")";
-    sc.samples_per_pass = 50;
-    sc.max_depth = high_detail ? 40 : 4;
+
+    switch (level) {
+    case 0: // 低設定0.6秒程度
+        sc.image_width = 400;
+        sc.image_height = 400;
+        sc.total_samples = 250;
+        sc.max_depth = 4;
+        break;
+
+    case 1: // 中設定40秒程度
+        sc.image_width = 800;
+        sc.image_height = 800;
+        sc.total_samples = 1000;
+        sc.max_depth = 40;
+        break;
+
+    case 2: // 最高設定6分程度
+        sc.image_width = 800;
+        sc.image_height = 800;
+        sc.total_samples = 10000;
+        sc.max_depth = 40;
+        break;
+    }
+
+    sc.name = "Finale Scene (Level:" + std::to_string(level) + ")";
+    sc.samples_per_pass = 25;
+
     sc.vfov = 40.0;
     sc.lookfrom = point3(478, 278, -600);
     sc.lookat = point3(278, 278, 0);
@@ -891,7 +912,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     int num_pass = sc.total_samples / sc.samples_per_pass;
 
     auto start_time = std::chrono::high_resolution_clock::now();
-    std::clog << "Rendering [" << sc.name <<  "] (" << sc.total_samples << " samples)...\n";
+    std::clog << "Rendering [" << sc.name <<  "] (" << sc.total_samples << " samples, " << sc.max_depth << " depth)...\n";
 
     for (int pass = 0; pass < num_pass; ++pass) {
         // パス番号を定数バッファに更新
@@ -981,7 +1002,7 @@ int main() {
         // 8: Cornell Smoke
         // 9: Final Scene (Preview 250 samples)
         // 10: Final Scene (High Detail 10,000 samples)
-        int scene_id = 10;
+        int scene_id = 0;
 
         SceneConfig sc;
         switch (scene_id) {
@@ -993,9 +1014,9 @@ int main() {
         case 6:  sc = scene_sample_light(); break;
         case 7:  sc = scene_cornell_box(); break;
         case 8:  sc = scene_cornell_smoke(); break;
-        case 9:  sc = scene_final_scene(false); break;
-        case 10: sc = scene_final_scene(true);  break;
-        default: sc = scene_final_scene(false); break;
+        case 9:  sc = scene_final_scene(0); break;
+        case 10: sc = scene_final_scene(1);  break;
+        default: sc = scene_final_scene(2); break;
         }
 
         return run_gpu_renderer(sc);

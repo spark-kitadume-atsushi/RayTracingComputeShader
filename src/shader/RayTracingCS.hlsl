@@ -292,10 +292,11 @@ bool hit_sphere(Sphere s, Ray r, float ray_tmin, float ray_tmax, inout HitRecord
     float3 current_center = s.center + r.time * s.center_vec;
     
     float3 oc = current_center - r.origin;
-    float a = dot(r.direction, r.direction);
+
+    // r.directionは単位ベクトルなので計算を除外
     float h = dot(r.direction, oc);
     float c = dot(oc, oc) - s.radius * s.radius;
-    float discriminant = h * h - a * c;
+    float discriminant = h * h - c;
 
     if (discriminant < 0.0f)
     {
@@ -303,11 +304,11 @@ bool hit_sphere(Sphere s, Ray r, float ray_tmin, float ray_tmax, inout HitRecord
     }
     
     float sqrtd = sqrt(discriminant);
-    float root = (h - sqrtd) / a;
+    float root = (h - sqrtd);
     
     if (root <= ray_tmin || ray_tmax <= root)
     {
-        root = (h + sqrtd) / a;
+        root = (h + sqrtd);
         if (root <= ray_tmin || ray_tmax <= root)
             return false;
     }
@@ -323,13 +324,14 @@ bool hit_sphere(Sphere s, Ray r, float ray_tmin, float ray_tmax, inout HitRecord
 }
 
 // 高速・低レジスタ・早期脱出型の AABB 判定
-bool hit_aabb(Aabb box, Ray r, float3 inv_d, float ray_tmin, float ray_tmax)
+bool hit_aabb(Aabb box, Ray r, float3 inv_d, float3 neg_orig_inv_d, float ray_tmin, float ray_tmax)
 {
     [unroll]
     for (int a = 0; a < 3; ++a)
     {
-        float t0 = (box.min_point[a] - r.origin[a]) * inv_d[a];
-        float t1 = (box.max_point[a] - r.origin[a]) * inv_d[a];
+        // mad(m, a, b) は m * a + b を 1 クロックで実行
+        float t0 = mad(box.min_point[a], inv_d[a], neg_orig_inv_d[a]);
+        float t1 = mad(box.max_point[a], inv_d[a], neg_orig_inv_d[a]);
 
         // スカラーのハードウェア min/max（レジスタ消費1枠のみ）
         float t_min = min(t0, t1);
@@ -364,9 +366,13 @@ bool hit_quad(Quad q, Ray r, float ray_tmin, float ray_tmax, inout HitRecord rec
     float3 intersection = r.origin + t * r.direction;
     float3 planar_hitpt_vector = intersection - q.Q;
     float alpha = dot(q.w, cross(planar_hitpt_vector, q.v));
-    float beta  = dot(q.w, cross(q.u, planar_hitpt_vector));
-    
-    if (alpha < 0.0f || alpha > 1.0f || beta < 0.0f || beta > 1.0f)
+
+    // 早期脱出
+    if (alpha < 0.0f || alpha > 1.0f)
+        return false;
+
+    float beta = dot(q.w, cross(q.u, planar_hitpt_vector));
+    if (beta < 0.0f || beta > 1.0f)
         return false;
     
     rec.t = t;
@@ -473,6 +479,9 @@ bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitR
         abs(r.direction.z) > 1e-8f ? 1.0f / r.direction.z : (r.direction.z >= 0 ? 1e8f : -1e8f)
     );
     
+    // 【追加】原点と逆数方向の積を事前計算（-r.origin * inv_d）
+    float3 neg_orig_inv_d = -r.origin * inv_d;
+    
     // GPUローカルメモリにスタックを確保（深さ64あれば数万個のオブジェクトに対応可能）
     // スクラッチメモリのスピルを抑えるためサイズを 20 に設定
     static const int stack_size = 20;
@@ -488,7 +497,7 @@ bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitR
         BvhNode node = BvhNodes[node_idx];
 
         // ノードのAABBに当たらなければこのノードおよびその配下はスキップ
-        if (!hit_aabb(node.bbox, r, inv_d, ray_tmin, closest_so_far))
+        if (!hit_aabb(node.bbox, r, inv_d, neg_orig_inv_d, ray_tmin, closest_so_far))
             continue;
 
         if (node.primitive_type >= 0)
