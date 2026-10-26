@@ -161,10 +161,11 @@ struct CameraBufferData
     float pixel_delta_v[3];
     float defocus_angle;
     float defocus_disk_u[3];
-    int   light_quad_index;
+    int   num_light_targets;    // ƒTƒ“ƒvƒŠƒ“ƒO‘ÎÌ”
     float defocus_disk_v[3];
     float pad1;
     float background[3];
     float pad2;
+    int light_target_data[4][4];    // [MAX_LIGHT_TARGETS][4]
 };
 #endif

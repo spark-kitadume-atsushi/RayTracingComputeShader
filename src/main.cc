@@ -844,15 +844,29 @@ int run_gpu_renderer(const SceneConfig sc) {
     cbData.max_depth            = sc.max_depth;
     cbData.defocus_angle        = static_cast<float>(sc.defocus_angle);
 
-    // シーン内の発光Quad (type == 3: DiffuseLight) を検索
-    int light_quad_index = -1;
-    for (size_t i = 0; i < sc.quads.size(); ++i) {
+    // サンプリング光源をリストアップ
+    // 天井照明、ガラス球などを指定可能
+    int target_count = 0;
+    const static int MAX_LIGHT_TARGETS = 4;
+
+    // 1. 発光Quadを追加
+    for (size_t i = 0; i < sc.quads.size() && target_count < MAX_LIGHT_TARGETS; ++i) {
         if (sc.quads[i].mat.type == 3) {
-            light_quad_index = static_cast<int>(i);
-            break;
+            cbData.light_target_data[target_count][0] = 1; // 1: Quad
+            cbData.light_target_data[target_count][1] = static_cast<int>(i);
+            target_count++;
         }
     }
-    cbData.light_quad_index = light_quad_index;
+
+    // 2. 発光Sphereを追加
+    for (size_t i = 0; i < sc.spheres.size() && target_count < MAX_LIGHT_TARGETS; ++i) {
+        if (sc.spheres[i].mat.type == 3) {
+            cbData.light_target_data[target_count][0] = 2; // 2: Sphere
+            cbData.light_target_data[target_count][1] = static_cast<int>(i);
+            target_count++;
+        }
+    }
+    cbData.num_light_targets = target_count;
 
     // 定数バッファの作成
     D3D11_BUFFER_DESC cbDesc = {};

@@ -3,6 +3,16 @@
 static const float PI     = 3.14159265358979323846f;
 static const float TWO_PI = 6.28318530717958647692f;
 
+// サンプリング対象の識別(0: Sphere, 1:Quad)
+struct LightTarget
+{
+    int type;   // 0:Sphere, 1:Quad
+    int index;  // Spheres または Quads 配列のインデックス
+};
+
+// 最大サンプリング対象数（4個程度あれば十分です）
+static const int MAX_LIGHT_TARGETS = 4;
+
 // 被写界深度パラメータを追加したカメラ定数バッファ（112bytes:16の倍数）
 cbuffer CameraBuffer : register(b0)
 {
@@ -15,11 +25,12 @@ cbuffer CameraBuffer : register(b0)
     float3 PixelDeltaV;
     float DefocusAngle;
     float3 DefocusDiskU;
-    int LightQuadIndex;
+    int NumLightTargets;    // サンプリング対称数
     float3 DefocusDiskV;
     float Pad1;
     float3 BackgroundColor;
     float Pad2;
+    int4 LightTargetData[MAX_LIGHT_TARGETS];    // x:type, y:index
 }
 
 // マテリアル(48bytes)
@@ -469,6 +480,96 @@ float quad_pdf_value(Quad q, float3 origin, float3 direction)
     return distance_squared / (cosine * area);
 }
 
+// 点Pから球体を見込む包含円錐無いの一様ランダム方向を生成
+float3 sphere_sample_direction(Sphere s, float3 origin, inout uint rng)
+{
+    float3 to_center = s.center - origin;
+    float dist_sq = dot(to_center, to_center);
+
+    // 点が球の内部または表面にある場合のガード
+    float r_sq = s.radius * s.radius;
+    if (dist_sq <= r_sq)
+        return random_uint_vector(rng);
+    
+    float cos_theta_max = sqrt(max(0.0f, 1.0f - r_sq / dist_sq));
+    
+    float r1 = rand_float(rng);
+    float r2 = rand_float(rng);
+    
+    float z = 1.0f + r2 * (cos_theta_max - 1.0f);
+    float phi = TWO_PI * r1;
+    float sin_theta = sqrt(max(0.0f, 1.0f - z * z));
+    float x = cos(phi) * sin_theta;
+    float y = sin(phi) * sin_theta;
+
+    ONB onb = build_onb(to_center);
+    return normalize(onb_local(onb, float3(x, y, z)));
+}
+
+// 球体に対する立体核PDFの評価
+float sphere_pdf_value(Sphere s, float3 origin, float3 direction)
+{
+    Ray r;
+    r.origin = origin;
+    r.direction = direction;
+    r.time = 0.0f;
+    
+    HitRecord rec = (HitRecord) 0;
+    // レイが球体に当たらなければPDFは0
+    if (!hit_sphere(s, r, 0.001f, 1e9f, rec))
+        return 0.0f;
+    
+    float3 to_center = s.center - origin;
+    float dist_sq = dot(to_center, to_center);
+    float r_sq = s.radius * s.radius;
+    if (dist_sq < r_sq)
+        return 0.0f;
+
+    float cos_theta_max = sqrt(max(0.0f, 1.0f - r_sq / dist_sq));
+    float solid_angle = TWO_PI * (1.0f - cos_theta_max);
+    return 1.0f / max(1e-8f, solid_angle);
+}
+
+// ターゲット全体の中からr何ダムに1つ選んでサンプリング方向を生成
+float3 sample_light_targets(float3 origin, inout uint rng)
+{
+    if (NumLightTargets <= 0)
+        return float3(0.0f, 1.0f, 0.0f);
+
+    int idx = min((int) (rand_float(rng) * NumLightTargets), NumLightTargets - 1);
+    int type = LightTargetData[idx].x;
+    int prim_idx = LightTargetData[idx].y;
+    
+    if (type == 0)  // Sphere
+        return sphere_sample_direction(Spheres[prim_idx], origin, rng);
+    else // Quad
+        return normalize(quad_sample_direction(Quads[prim_idx], origin, rng));
+}
+
+// 生成された方向に対するターゲット全体の平均PDF値を計算
+float light_targets_pdf_value(float3 origin, float3 direction)
+{
+    if (NumLightTargets <= 0)
+        return 0.0f;
+    
+    float sum_pdf = 0.0f;
+    [unroll]
+    for (int i = 0; i < MAX_LIGHT_TARGETS; ++i)
+    {
+        if (i >= NumLightTargets)
+            break;
+        
+        int type = LightTargetData[i].x;
+        int prim_idx = LightTargetData[i].y;
+        
+        if (type == 0)
+            sum_pdf += sphere_pdf_value(Spheres[prim_idx], origin, direction);
+        else
+            sum_pdf += quad_pdf_value(Quads[prim_idx], origin, direction);
+    }
+    return sum_pdf / (float) NumLightTargets;
+}
+
 // Volume衝突判定
 bool hit_volume(Volume vol, Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitRecord rec)
 {
@@ -670,70 +771,6 @@ float scattering_pdf(Material mat, HitRecord rec, Ray scattered)
 
 static const float normal_buffer = 0.002f;
 
-#if false
-bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered, inout uint rng)
-{
-    static const float normal_buffer = 0.002f;
-    if (rec.mat.type == 3)  // DiffuseLight
-    {
-        return false;   // 散乱せずに終了
-    }
-    else if (rec.mat.type == 0) // Lambertian
-    {
-        // 強制終了させず、内側ヒット時も外向き法線を使って球の外へ脱出させる
-        float3 outward_dir = rec.front_face ? rec.normal : -rec.normal;
-        
-        float3 scatter_direction = outward_dir + random_uint_vector(rng);
-        if (dot(scatter_direction, scatter_direction) < 1e-8f)
-            scatter_direction = outward_dir;
-
-        scattered.origin = rec.p + outward_dir * normal_buffer; // 法線方向にわずかに押し出す
-        scattered.direction = normalize(scatter_direction);
-        scattered.time = r_in.time;
-        attenuation = get_material_albedo(rec.mat, rec.p, rec.uv);
-        return true;
-    }
-    else if (rec.mat.type == 1) // Metal
-    {
-        float3 reflected = reflect(r_in.direction, rec.normal);
-        float3 scatter_direction = reflected + rec.mat.param * random_uint_vector(rng);
-        scattered.origin = rec.p + rec.normal * normal_buffer; // 法線方向にわずかに押し出す
-        scattered.direction = normalize(scatter_direction);
-        scattered.time = r_in.time;
-        attenuation = get_material_albedo(rec.mat, rec.p, rec.uv);
-        return dot(scattered.direction, rec.normal) > 0.0f;
-    }
-    else if (rec.mat.type == 2) // Dielectric
-    {
-        attenuation = float3(1.0f, 1.0f, 1.0f);
-        float ri = rec.front_face ? (1.0f / rec.mat.param) : rec.mat.param;
-        
-        float cos_theta = min(dot(-r_in.direction, rec.normal), 1.0f);
-        float sin_theta = sqrt(max(0.0f, 1.0f - cos_theta * cos_theta));
-
-        bool cannot_refract = (ri * sin_theta) > 1.0f;
-        float3 direction;
-        
-        if (cannot_refract || reflectance(cos_theta, ri) > rand_float(rng))
-            direction = reflect(r_in.direction, rec.normal);
-        else
-            direction = refract(r_in.direction, rec.normal, ri);
-        
-        scattered.origin = rec.p;
-        scattered.direction = normalize(direction);
-        scattered.time = r_in.time;
-        return true;
-    }
-    else //if (rec.mat.type == 4) // Isotropic (Constant Medium)
-    {
-        scattered.origin = rec.p;
-        scattered.direction = random_uint_vector(rng);  // 全方位一様散乱
-        scattered.time = r_in.time;
-        attenuation = rec.mat.albedo;
-        return true;
-    }
-}
-#else
 bool scatter(Ray r_in, HitRecord rec, inout uint rng, out ScatterRecord srec)
 {
     static const float normal_buffer = 0.002f;
@@ -804,7 +841,6 @@ bool scatter(Ray r_in, HitRecord rec, inout uint rng, out ScatterRecord srec)
         return true;
     }
 }
-#endif
 
 // エントリポイント関数。1スレッドグループあたり（16,16,1）スレッドで実行
 [numthreads(16, 16, 1)]
@@ -890,11 +926,9 @@ void CSMain(uint3 id : SV_DispatchThreadID)
                     float3 scattered_dir;
                     
                     // 1.散乱方向の生成（50%の確率で光源をサンプリング）
-                    if (LightQuadIndex >= 0 && rand_float(rng) < 0.5f)
+                    if (NumLightTargets >= 0 && rand_float(rng) < 0.5f)
                     {
-                        Quad lq = Quads[LightQuadIndex];
-                        float3 to_light = quad_sample_direction(lq, rec.p, rng);
-                        scattered_dir = normalize(to_light);
+                        scattered_dir = sample_light_targets(rec.p, rng);
                     }
                     else
                     {
@@ -903,14 +937,12 @@ void CSMain(uint3 id : SV_DispatchThreadID)
                     }
                     
                     // 2.混合PDF値の計算（両方の確率密度を重み付け合算）
-                    float p_cosine = dot(outward_dir, scattered_dir) / PI;
-                    p_cosine = max(0.0f, p_cosine);
-
+                    float p_cosine = max(0.0f, dot(outward_dir, scattered_dir) / PI);
                     float pdf_val = p_cosine;
-                    if (LightQuadIndex >= 0)
+
+                    if (NumLightTargets > 0)
                     {
-                        Quad lq = Quads[LightQuadIndex];
-                        float p_light = quad_pdf_value(lq, rec.p, scattered_dir);
+                        float p_light = light_targets_pdf_value(rec.p, scattered_dir);
                         pdf_val = 0.5f * p_cosine + 0.5f * p_light;
                     }
                     
