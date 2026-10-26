@@ -15,7 +15,7 @@ cbuffer CameraBuffer : register(b0)
     float3 PixelDeltaV;
     float DefocusAngle;
     float3 DefocusDiskU;
-    float Pad0;
+    int LightQuadIndex;
     float3 DefocusDiskV;
     float Pad1;
     float3 BackgroundColor;
@@ -97,6 +97,14 @@ struct HitRecord
     Material mat;
 };
 
+// 散乱結果を格納する構造体
+struct ScatterRecord
+{
+    bool is_specular; // 鏡面反射(Metal/Dielectric)かどうかのフラグ
+    Ray scattered_ray; // 生成された散乱レイ
+    float3 attenuation; // マテリアルのアルベド
+};
+
 // AABB（境界ボックス:32bytes）
 struct Aabb
 {
@@ -115,6 +123,33 @@ struct BvhNode
     int primitive_type;     // -1: Branch(内部ノード), 0: Sphere, 1: Quad
     int primitive_index;    // 各配列内のインデックス
 };
+
+// ---------------------------------------------------
+// 正規直交基底 (ONB) 構造体と関数
+// ---------------------------------------------------
+struct ONB
+{
+    float3 u;
+    float3 v;
+    float3 w;
+};
+
+ONB build_onb(float3 n)
+{
+    ONB onb;
+    onb.w = normalize(n);
+    // wがX軸に近すぎる場合の特異点を回避
+    float3 a = (abs(onb.w.x) > 0.9f) ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+    onb.v = normalize(cross(onb.w, a));
+    onb.u = cross(onb.w, onb.v);
+    return onb;
+}
+
+// ローカル座標からワールド空間への変換
+float3 onb_local(ONB onb, float3 a)
+{
+    return a.x * onb.u + a.y * onb.v + a.z * onb.w;
+}
 
 // 出力先テクスチャ（UAV:u0 スロットにバインド）
 RWTexture2D<float4> OutputTexture : register(u0);
@@ -253,6 +288,22 @@ float perlin_turb(float3 p, int depth)
     return abs(accum);
 }
 
+// ---------------------------------------------------
+// コサイン半球サンプリング
+// ---------------------------------------------------
+float3 random_cosine_direction(inout uint rng)
+{
+    float r1 = rand_float(rng);
+    float r2 = rand_float(rng);
+    
+    float phi = TWO_PI * r1;
+    float x = cos(phi) * sqrt(r2);
+    float y = sin(phi) * sqrt(r2);
+    float z = sqrt(max(0.0f, 1.0f - r2)); // Z軸方向(法線方向)の成分
+    
+    return float3(x, y, z);
+}
+
 // テクスチャ種別に応じた表面色を計算
 float3 get_material_albedo(Material mat, float3 p, float2 uv)
 {
@@ -380,6 +431,42 @@ bool hit_quad(Quad q, Ray r, float ray_tmin, float ray_tmax, inout HitRecord rec
     rec.normal = rec.front_face ? q.normal : -q.normal;
     rec.mat = q.mat;
     return true;
+}
+
+// Quad上のランダム点への方向ベクトルを生成
+float3 quad_sample_direction(Quad q, float3 origin, inout uint rng)
+{
+    float3 random_point = q.Q + rand_float(rng) * q.u + rand_float(rng) * q.v;
+    return random_point - origin;
+}
+
+// レイ方向に対するQuadの立体角PDF値を計算
+float quad_pdf_value(Quad q, float3 origin, float3 direction)
+{
+    Ray r;
+    r.origin = origin;
+    r.direction = direction;
+    r.time = 0.0f;
+    
+    HitRecord rec = (HitRecord) 0;
+    // わずかに押し出した位置から交差判定
+    if (!hit_quad(q, r, 0.001f, 1e9f, rec))
+        return 0.0f;
+
+    // direction は正規化済みのため rec.t がそのまま距離
+    float distance_squared = rec.t * rec.t;
+    
+    // 平行四辺形の面積 |u x v|
+    float area = length(cross(q.u, q.v));
+    if (area < 1e-8f)
+        return 0.0f;
+
+    // 光源面の法線とレイ方向のコサイン
+    float cosine = abs(dot(direction, q.normal));
+    if (cosine < 1e-8f)
+        return 0.0f;
+
+    return distance_squared / (cosine * area);
 }
 
 // Volume衝突判定
@@ -563,11 +650,27 @@ float3 emitted(HitRecord rec)
 {
     if (rec.mat.type == 3)  // 3:DiffuseLight
     {
-        return get_material_albedo(rec.mat, rec.p, rec.uv);
+        if (rec.front_face)
+            return get_material_albedo(rec.mat, rec.p, rec.uv);
     }
     return float3(0.0f, 0.0f, 0.0f);
 }
 
+// 散乱PDFの評価関数
+float scattering_pdf(Material mat, HitRecord rec, Ray scattered)
+{
+    if (mat.type == 0) // Lambertian
+    {
+        float cosine = dot(rec.normal, scattered.direction);
+        return cosine < 0.0f ? 0.0f : cosine / PI;
+    }
+    // 鏡面反射(Metal/Dielectric)はデルタ分布として扱うため0を返す
+    return 0.0f;
+}
+
+static const float normal_buffer = 0.002f;
+
+#if false
 bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered, inout uint rng)
 {
     static const float normal_buffer = 0.002f;
@@ -630,6 +733,78 @@ bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered,
         return true;
     }
 }
+#else
+bool scatter(Ray r_in, HitRecord rec, inout uint rng, out ScatterRecord srec)
+{
+    static const float normal_buffer = 0.002f;
+    srec = (ScatterRecord) 0; // ゼロ初期化
+    
+    if (rec.mat.type == 3)  // DiffuseLight
+    {
+        return false;
+    }
+    else if (rec.mat.type == 0) // Lambertian
+    {
+        srec.is_specular = false;
+        srec.attenuation = get_material_albedo(rec.mat, rec.p, rec.uv);
+        
+        // ONBを用いてコサイン半球分布に基づく散乱方向を生成
+        float3 outward_dir = rec.front_face ? rec.normal : -rec.normal;
+        ONB onb = build_onb(outward_dir);
+        float3 local_dir = random_cosine_direction(rng);
+        float3 scatter_dir = onb_local(onb, local_dir);
+        
+        srec.scattered_ray.origin = rec.p + outward_dir * normal_buffer;
+        srec.scattered_ray.direction = normalize(scatter_dir);
+        srec.scattered_ray.time = r_in.time;
+        return true;
+    }
+    else if (rec.mat.type == 1) // Metal
+    {
+        srec.is_specular = true;
+        srec.attenuation = get_material_albedo(rec.mat, rec.p, rec.uv);
+        
+        float3 reflected = reflect(r_in.direction, rec.normal);
+        float3 scatter_direction = reflected + rec.mat.param * random_uint_vector(rng);
+        
+        srec.scattered_ray.origin = rec.p + rec.normal * normal_buffer;
+        srec.scattered_ray.direction = normalize(scatter_direction);
+        srec.scattered_ray.time = r_in.time;
+        return dot(srec.scattered_ray.direction, rec.normal) > 0.0f;
+    }
+    else if (rec.mat.type == 2) // Dielectric
+    {
+        srec.is_specular = true;
+        srec.attenuation = float3(1.0f, 1.0f, 1.0f);
+        float ri = rec.front_face ? (1.0f / rec.mat.param) : rec.mat.param;
+        
+        float cos_theta = min(dot(-r_in.direction, rec.normal), 1.0f);
+        float sin_theta = sqrt(max(0.0f, 1.0f - cos_theta * cos_theta));
+
+        bool cannot_refract = (ri * sin_theta) > 1.0f;
+        float3 direction;
+        
+        if (cannot_refract || reflectance(cos_theta, ri) > rand_float(rng))
+            direction = reflect(r_in.direction, rec.normal);
+        else
+            direction = refract(r_in.direction, rec.normal, ri);
+        
+        srec.scattered_ray.origin = rec.p;
+        srec.scattered_ray.direction = normalize(direction);
+        srec.scattered_ray.time = r_in.time;
+        return true;
+    }
+    else //if (rec.mat.type == 4) // Isotropic (Constant Medium)
+    {
+        srec.is_specular = true;
+        srec.scattered_ray.origin = rec.p;
+        srec.scattered_ray.direction = random_uint_vector(rng); // 全方位一様散乱
+        srec.scattered_ray.time = r_in.time;
+        srec.attenuation = rec.mat.albedo;
+        return true;
+    }
+}
+#endif
 
 // エントリポイント関数。1スレッドグループあたり（16,16,1）スレッドで実行
 [numthreads(16, 16, 1)]
@@ -692,16 +867,68 @@ void CSMain(uint3 id : SV_DispatchThreadID)
                 // マテリアルの発光成分を加算
                 sample_color += throughput * emitted(rec);
                 
-                Ray scattered;
-                float3 attenuation;
-                if (scatter(cur_ray, rec, attenuation, scattered, rng))
+                ScatterRecord srec;
+                if (!scatter(cur_ray, rec, rng, srec))
                 {
-                    throughput *= attenuation;
-                    cur_ray = scattered;
+                    // DiffuseLightなどは散乱しないので終了
+                    break;
+                }
+                
+                if (srec.is_specular)
+                {
+                    throughput *= srec.attenuation;
+                    cur_ray = srec.scattered_ray;
                 }
                 else
                 {
-                    break;
+                    // ----------------------------------------------------
+                    // モンテカルロ積分: throughput *= (BRDF * cos(θ)) / PDF
+                    // ----------------------------------------------------
+                    float3 outward_dir = rec.front_face ? rec.normal: -rec.normal;
+                    ONB onb = build_onb(outward_dir);
+                    
+                    float3 scattered_dir;
+                    
+                    // 1.散乱方向の生成（50%の確率で光源をサンプリング）
+                    if (LightQuadIndex >= 0 && rand_float(rng) < 0.5f)
+                    {
+                        Quad lq = Quads[LightQuadIndex];
+                        float3 to_light = quad_sample_direction(lq, rec.p, rng);
+                        scattered_dir = normalize(to_light);
+                    }
+                    else
+                    {
+                        float3 local_dir = random_cosine_direction(rng);
+                        scattered_dir = normalize(onb_local(onb, local_dir));
+                    }
+                    
+                    // 2.混合PDF値の計算（両方の確率密度を重み付け合算）
+                    float p_cosine = dot(outward_dir, scattered_dir) / PI;
+                    p_cosine = max(0.0f, p_cosine);
+
+                    float pdf_val = p_cosine;
+                    if (LightQuadIndex >= 0)
+                    {
+                        Quad lq = Quads[LightQuadIndex];
+                        float p_light = quad_pdf_value(lq, rec.p, scattered_dir);
+                        pdf_val = 0.5f * p_cosine + 0.5f * p_light;
+                    }
+                    
+                    // 3.スループット更新
+                    float cos_theta = dot(outward_dir, scattered_dir);
+                    if (pdf_val > 1e-8f && cos_theta > 0.0f) // ゼロ除算禁止
+                    {
+                        // LambertianのBRDF(albedo / π)
+                        float3 brdf = srec.attenuation / PI;
+                        throughput *= (brdf * cos_theta) / pdf_val;
+
+                        cur_ray.origin = rec.p + outward_dir * normal_buffer;
+                        cur_ray.direction = scattered_dir;
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
             }
             else

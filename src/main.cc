@@ -527,7 +527,7 @@ SceneConfig scene_final_scene(int level) {
     sc.vfov = 40.0;
     sc.lookfrom = point3(478, 278, -600);
     sc.lookat = point3(278, 278, 0);
-    sc.background = color(0, 0, 0);
+    sc.background = color(0.0, 0.0, 0.0);
 
     // 1. 地面のランダム直方体群
     GpuMaterial ground_mat = make_solid_material({ 0.48f, 0.83f, 0.53f }, 0, 0.0f);
@@ -844,6 +844,16 @@ int run_gpu_renderer(const SceneConfig sc) {
     cbData.max_depth            = sc.max_depth;
     cbData.defocus_angle        = static_cast<float>(sc.defocus_angle);
 
+    // シーン内の発光Quad (type == 3: DiffuseLight) を検索
+    int light_quad_index = -1;
+    for (size_t i = 0; i < sc.quads.size(); ++i) {
+        if (sc.quads[i].mat.type == 3) {
+            light_quad_index = static_cast<int>(i);
+            break;
+        }
+    }
+    cbData.light_quad_index = light_quad_index;
+
     // 定数バッファの作成
     D3D11_BUFFER_DESC cbDesc = {};
     cbDesc.ByteWidth = sizeof(CameraBufferData);    // 16の倍数
@@ -1002,7 +1012,7 @@ int main() {
         // 8: Cornell Smoke
         // 9: Final Scene (Preview 250 samples)
         // 10: Final Scene (High Detail 10,000 samples)
-        int scene_id = 0;
+        int scene_id = 10;
 
         SceneConfig sc;
         switch (scene_id) {
