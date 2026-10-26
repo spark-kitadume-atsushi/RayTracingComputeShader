@@ -180,16 +180,14 @@ float2 get_sphere_uv(float3 outward_normal)
 // 高品質な3D整数ハッシュ(PCG3D)
 uint3 pcg3d(uint3 v)
 {
-    uint T = 1664525u;
-    v = v * T + 1013904223u;
-    v.x += v.y * T;
-    v.y += v.z * T;
-    v.z += v.x * T;
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     v ^= v >> 16u;
-    v.x += v.y * T;
-    v.y += v.z * T;
-    v.z += v.x * T;
-    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
     return v;
 }
 
@@ -273,7 +271,7 @@ float3 get_material_albedo(Material mat, float3 p, float2 uv)
     else if (mat.text_type == 3)    // Perlin Marble Noise
     {
         // 大理石模様
-        float s = 0.5f * (1.0f + sin(mat.scale * p.z + 10.0f * perlin_turb(p * mat.scale, 7)));
+        float s = 0.5f * (1.0f + sin(mat.scale * p.z + 10.0f * perlin_turb(p, 7)));
         return s * mat.albedo;
     }
     
@@ -484,7 +482,7 @@ bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitR
     
     // GPUローカルメモリにスタックを確保（深さ64あれば数万個のオブジェクトに対応可能）
     // スクラッチメモリのスピルを抑えるためサイズを 20 に設定
-    static const int stack_size = 20;
+    static const int stack_size = 64;
     int stack[stack_size];
     int stack_ptr = 0;
     
@@ -527,14 +525,22 @@ bool hit_world(Ray r, float ray_tmin, float ray_tmax, inout uint rng, inout HitR
         else
         {
             // 内部ノードの場合、node.sphere_index = -1が与えられる
-            // 内部ノード(Branch):子ノードをスタックに積む
-            // （手前の子から探索できるよう、right->leftの順にPush）
-            if (stack_ptr <= stack_size - 2)
+            // Push前に左右の子ノードのAABBを判定し、当たったものだけを積む
+            int left_idx = node.left_child_index;
+            int right_idx = node.right_child_index;
+
+            bool hit_left = (left_idx >= 0) && hit_aabb(BvhNodes[left_idx].bbox, r, inv_d, neg_orig_inv_d, ray_tmin, closest_so_far);
+            bool hit_right = (right_idx >= 0) && hit_aabb(BvhNodes[right_idx].bbox, r, inv_d, neg_orig_inv_d, ray_tmin, closest_so_far);
+            
+            // 各Pushごとに1枠以上の空きがあるか（stack_ptr < stack_size）を判定
+            if (hit_right && stack_ptr < stack_size)
             {
-                if (node.right_child_index >= 0)
-                    stack[stack_ptr++] = node.right_child_index;
-                if (node.left_child_index >= 0)
-                    stack[stack_ptr++] = node.left_child_index;
+                stack[stack_ptr++] = right_idx;
+            }
+            
+            if (hit_left && stack_ptr < stack_size)
+            {
+                stack[stack_ptr++] = left_idx;
             }
         }
     }
@@ -564,17 +570,21 @@ float3 emitted(HitRecord rec)
 
 bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered, inout uint rng)
 {
+    static const float normal_buffer = 0.002f;
     if (rec.mat.type == 3)  // DiffuseLight
     {
         return false;   // 散乱せずに終了
     }
     else if (rec.mat.type == 0) // Lambertian
     {
-        float3 scatter_direction = rec.normal + random_uint_vector(rng);
+        // 強制終了させず、内側ヒット時も外向き法線を使って球の外へ脱出させる
+        float3 outward_dir = rec.front_face ? rec.normal : -rec.normal;
+        
+        float3 scatter_direction = outward_dir + random_uint_vector(rng);
         if (dot(scatter_direction, scatter_direction) < 1e-8f)
-            scatter_direction = rec.normal;
+            scatter_direction = outward_dir;
 
-        scattered.origin = rec.p;
+        scattered.origin = rec.p + outward_dir * normal_buffer; // 法線方向にわずかに押し出す
         scattered.direction = normalize(scatter_direction);
         scattered.time = r_in.time;
         attenuation = get_material_albedo(rec.mat, rec.p, rec.uv);
@@ -584,7 +594,7 @@ bool scatter(Ray r_in, HitRecord rec, out float3 attenuation, out Ray scattered,
     {
         float3 reflected = reflect(r_in.direction, rec.normal);
         float3 scatter_direction = reflected + rec.mat.param * random_uint_vector(rng);
-        scattered.origin = rec.p;
+        scattered.origin = rec.p + rec.normal * normal_buffer; // 法線方向にわずかに押し出す
         scattered.direction = normalize(scatter_direction);
         scattered.time = r_in.time;
         attenuation = get_material_albedo(rec.mat, rec.p, rec.uv);
@@ -633,15 +643,25 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= width || id.y >= height)
         return;
 
-    // パス全体を通じて重複しない一意の乱数シード
-    uint sample_offset = (uint) PassIndex * (uint)SamplesThisPass;
-    uint rng = id.x * 1973U + id.y * 9277u + sample_offset * 26699u;
+    // 3Dハッシュ関数（pcg3d）を通して空間相関を完全に破壊する
+    uint3 seed_vec = uint3(id.xy, (uint)PassIndex);
+    uint3 hashed = pcg3d(seed_vec);
+    
+    // 3成分を結合して一様ホワイトノイズシードを作成
+    uint rng = hashed.x ^ hashed.y ^ hashed.z;
+    
+    // ウォームアップ（初期状態の残留相関を1ステップ破棄）
+    pcg_hash(rng);
 
     float3 pass_color = float3(0.0f, 0.0f, 0.0f);
     
     // マルチサンプリング（アンチエイリアス）ループ
     for (int s = 0; s < SamplesThisPass; ++s)
     {
+        // サンプル事に乱数状態を強く拡散
+        uint sample_seed = rng ^ (uint) s * 0x9E3779B9u;
+        rng = pcg_hash(sample_seed);
+        
         // ピクセル平面上のサンプリング店
         float rx = rand_float(rng) - 0.5f;
         float ry = rand_float(rng) - 0.5f;
@@ -659,7 +679,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         cur_ray.origin = ray_origin;
         cur_ray.direction = normalize(pixel_sample - ray_origin);
         cur_ray.time = rand_float(rng); // シャッター時間[0,1]をサンプリング
-        
+
         float3 throughput = float3(1.0f, 1.0f, 1.0f);
         float3 sample_color = float3(0.0f, 0.0f, 0.0f);
 
