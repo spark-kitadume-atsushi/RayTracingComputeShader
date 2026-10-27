@@ -321,9 +321,14 @@ float3 get_material_albedo(Material mat, float3 p, float2 uv)
     if (mat.text_type == 1)              // 3D Checker
     {
         float inv_scale = 1.0f / mat.scale;
-        int3 ip = int3(floor(inv_scale * p));
-        bool is_even = ((ip.x + ip.y + ip.z) % 2) == 0;
-        return is_even ? mat.albedo : mat.albedo2;
+
+        // 【修正】0境界での floor の正負反転を防ぐため、微小オフセット (0.001f) を加えて格子を安定化
+        float3 shifted_p = p + 0.001f;
+        int3 ip = int3(floor(inv_scale * shifted_p));
+        
+        // 負の数でも安全に偶奇を判定する
+        int parity = (ip.x + ip.y + ip.z) & 1;
+        return (parity == 0) ? mat.albedo : mat.albedo2;
     }
     else if (mat.text_type == 2)    // Image Texture
     {
@@ -769,6 +774,7 @@ float scattering_pdf(Material mat, HitRecord rec, Ray scattered)
     return 0.0f;
 }
 
+// hit_world の最小交差距離 0.001f よりも確実に外へ逃がすため 0.002f に設定
 static const float normal_buffer = 0.002f;
 
 bool scatter(Ray r_in, HitRecord rec, inout uint rng, out ScatterRecord srec)
@@ -821,12 +827,16 @@ bool scatter(Ray r_in, HitRecord rec, inout uint rng, out ScatterRecord srec)
         bool cannot_refract = (ri * sin_theta) > 1.0f;
         float3 direction;
         
-        if (cannot_refract || reflectance(cos_theta, ri) > rand_float(rng))
+        bool is_reflection = cannot_refract || reflectance(cos_theta, ri) > rand_float(rng);
+        if (is_reflection)
             direction = reflect(r_in.direction, rec.normal);
         else
             direction = refract(r_in.direction, rec.normal, ri);
         
-        srec.scattered_ray.origin = rec.p;
+        // 自己交差を絶つためのオフセット
+        float3 offset_dir = is_reflection ? rec.normal : -rec.normal;
+        
+        srec.scattered_ray.origin = rec.p + offset_dir * normal_buffer;
         srec.scattered_ray.direction = normalize(direction);
         srec.scattered_ray.time = r_in.time;
         return true;

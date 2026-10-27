@@ -33,4 +33,18 @@ void write_color(std::ostream& out, const color& pixel_color) {
     out << rbyte << ' ' << gbyte << ' ' << bbyte << '\n';
 }
 
+// ŠÈˆÕACESToneMappingƒwƒ‹ƒp[
+inline color tone_map_aces(const color& c) {
+    static const interval intensity(0.000, 0.999);
+    float a = 2.51f;
+    float b = 0.03f;
+    float c_val = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return color(
+        intensity.clamp((c.x() * (a * c.x() + b)) / (c.x() * (c_val * c.x() + d) + e)),
+        intensity.clamp((c.y() * (a * c.y() + b)) / (c.y() * (c_val * c.y() + d) + e)),
+        intensity.clamp((c.z() * (a * c.z() + b)) / (c.z() * (c_val * c.z() + d) + e))
+    );
+}
 #endif

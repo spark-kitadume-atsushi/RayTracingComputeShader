@@ -1,4 +1,4 @@
-#include "rtweekend.h"
+ï»¿#include "rtweekend.h"
 
 #include "bvh.h"
 #include "camera.h"
@@ -10,27 +10,27 @@
 #include "quad.h"
 #include "texture.h"
 
-// •K{ƒwƒbƒ_[
-#include <d3d11.h>          // DirectX 11 –{‘Ì
-#include <d3dcompiler.h>    // HLSLƒVƒF[ƒ_[‚ÌƒRƒ“ƒpƒCƒ‹—p
-#include <wrl/client.h>     // Microsoft::WRL::ComPtr —p
+// å¿…é ˆãƒ˜ãƒƒãƒ€ãƒ¼
+#include <d3d11.h>          // DirectX 11 æœ¬ä½“
+#include <d3dcompiler.h>    // HLSLã‚·ã‚§ãƒ¼ãƒ€ãƒ¼ã®ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«ç”¨
+#include <wrl/client.h>     // Microsoft::WRL::ComPtr ç”¨
 
-// ƒGƒ‰[ƒ`ƒFƒbƒN‚È‚Ç‚Åg‚¤•W€ƒ‰ƒCƒuƒ‰ƒŠ
+// ã‚¨ãƒ©ãƒ¼ãƒã‚§ãƒƒã‚¯ãªã©ã§ä½¿ã†æ¨™æº–ãƒ©ã‚¤ãƒ–ãƒ©ãƒª
 #include <iostream>
 #include <vector>
 #include <stdexcept>
 #include <algorithm>
 #include <thread>
 
-// ComPtr ‚ğ’Z‚­‘‚­‚½‚ß‚Ì‹Lq
+// ComPtr ã‚’çŸ­ãæ›¸ããŸã‚ã®è¨˜è¿°
 using Microsoft::WRL::ComPtr;
 
 #define FINAL_SCENE_HIGH_DETAIL
 
-// DirectX API ‚ÌŒÄ‚Ño‚µŒ‹‰Ê‚ğƒ`ƒFƒbƒN‚·‚éƒ}ƒNƒ
+// DirectX API ã®å‘¼ã³å‡ºã—çµæœã‚’ãƒã‚§ãƒƒã‚¯ã™ã‚‹ãƒã‚¯ãƒ­
 #define CheckHR(hr) if (FAILED(hr)) { throw std::runtime_error("DirectX Error!"); }
 
-// Y²ü‚è‚Ì3D‰ñ“]ƒwƒ‹ƒp
+// Yè»¸å‘¨ã‚Šã®3Då›è»¢ãƒ˜ãƒ«ãƒ‘
 inline vec3 rotate_vec_y(const vec3& v, double angle_deg) {
     auto rad = degrees_to_radians(angle_deg);
     auto sin_theta = std::sin(rad);
@@ -51,7 +51,7 @@ GpuMaterial make_solid_material(const color& albedo, int type, float param)
     return mat;
 }
 
-// Spehreì¬ƒwƒ‹ƒp
+// Spehreä½œæˆãƒ˜ãƒ«ãƒ‘
 GpuSphere make_gpu_sphere(const point3& center, float radius, const vec3& center_vec, const GpuMaterial& mat)
 {
     GpuSphere s = {};
@@ -72,7 +72,7 @@ GpuSphere make_gpu_sphere(const point3& center, float radius, const vec3& center
 GpuAabb compute_sphere_aabb(const GpuSphere& s)
 {
     GpuAabb bbox;
-    // Ã~‹…‚Æ“®‚­‹…A—¼•û‚É‘Î‰‚·‚é
+    // é™æ­¢çƒã¨å‹•ãçƒã€ä¸¡æ–¹ã«å¯¾å¿œã™ã‚‹
     float c0[3] = { s.center[0], s.center[1] , s.center[2] };
     float c1[3] = { s.center[0] + s.center_vec[0],s.center[1] + s.center_vec[1] ,s.center[2] + s.center_vec[2] };
 
@@ -84,7 +84,7 @@ GpuAabb compute_sphere_aabb(const GpuSphere& s)
     return bbox;
 }
 
-// Quadì¬ƒwƒ‹ƒp
+// Quadä½œæˆãƒ˜ãƒ«ãƒ‘
 GpuQuad make_gpu_quad(const point3& Q, const vec3& u, const vec3& v, const GpuMaterial& mat)
 {
     GpuQuad q = {};
@@ -121,7 +121,7 @@ GpuAabb compute_quad_aabb(const GpuQuad& q) {
         std::fmax(std::fmax(p0.z(), p1.z()), std::fmax(p2.z(), p3.z()))
     );
 
-    // •½–Ê‚ÅŒú‚İ‚ª0‚É‚È‚é‚Ì‚ğ–h‚®”÷Î•ƒpƒfƒBƒ“ƒO
+    // å¹³é¢ã§åšã¿ãŒ0ã«ãªã‚‹ã®ã‚’é˜²ãå¾®ç¬‘å¹…ãƒ‘ãƒ‡ã‚£ãƒ³ã‚°
     GpuAabb bbox = {};
     const float eps = 0.0001f;
     for (int i = 0; i < 3; ++i) {
@@ -191,13 +191,14 @@ GpuAabb merge_aabb(const GpuAabb& a, const GpuAabb& b)
 }
 
 
-// ’¼•û‘Ì
+// ç›´æ–¹ä½“
 void add_box(
     const point3& a, const point3& b,
     const GpuMaterial& mat,
     double angle_deg,
     const vec3& offset,
-    std::vector<GpuQuad>& quad_scene)
+    std::vector<GpuQuad>& quad_scene,
+    bool invert_normals = false)
 {
     point3 min_p(std::fmin(a.x(), b.x()), std::fmin(a.y(), b.y()), std::fmin(a.z(), b.z()));
     point3 max_p(std::fmax(a.x(), b.x()), std::fmax(a.y(), b.y()), std::fmax(a.z(), b.z()));
@@ -208,27 +209,32 @@ void add_box(
 
     struct Face { point3 Q; vec3 u; vec3 v; };
     Face faces[6] = {
-        { point3(min_p.x(), min_p.y(), max_p.z()),  dx,  dy }, // è‘O (front)
-        { point3(max_p.x(), min_p.y(), max_p.z()), -dz,  dy }, // ‰E–Ê (right)
-        { point3(max_p.x(), min_p.y(), min_p.z()), -dx,  dy }, // ‰œ–Ê (back)
-        { point3(min_p.x(), min_p.y(), min_p.z()),  dz,  dy }, // ¶–Ê (left)
-        { point3(min_p.x(), max_p.y(), max_p.z()),  dx, -dz }, // ã–Ê (top)
-        { point3(min_p.x(), min_p.y(), min_p.z()),  dx,  dz }  // ’ê–Ê (bottom)
+        { point3(min_p.x(), min_p.y(), max_p.z()),  dx,  dy }, // æ‰‹å‰ (front)
+        { point3(max_p.x(), min_p.y(), max_p.z()), -dz,  dy }, // å³é¢ (right)
+        { point3(max_p.x(), min_p.y(), min_p.z()), -dx,  dy }, // å¥¥é¢ (back)
+        { point3(min_p.x(), min_p.y(), min_p.z()),  dz,  dy }, // å·¦é¢ (left)
+        { point3(min_p.x(), max_p.y(), max_p.z()),  dx, -dz }, // ä¸Šé¢ (top)
+        { point3(min_p.x(), min_p.y(), min_p.z()),  dx,  dz }  // åº•é¢ (bottom)
     };
 
     for (const auto& f : faces) {
-        // ’¸“_Q‚Í‰ñ“]A•½tˆÚ“®
+        // é ‚ç‚¹Qã¯å›è»¢ã€å¹³è¡¡ç§»å‹•
         point3 Q_rot = rotate_vec_y(f.Q, angle_deg) + offset;
-        // ƒxƒNƒgƒ‹u,v‚Í•ÏˆÊ‚È‚Ì‚Å‰ñ“]‚Ì‚İ
-        vec3 u_rot = rotate_vec_y(f.u, angle_deg);
-        vec3 v_rot = rotate_vec_y(f.v, angle_deg);
+
+        // å†…å‘ããƒ•ãƒ©ã‚°ãŒç«‹ã£ã¦ã„ã‚‹å ´åˆã¯uã¨vã‚’å…¥ã‚Œæ›¿ãˆã‚‹
+        vec3 u_src = invert_normals ? f.v : f.u;
+        vec3 v_src = invert_normals ? f.u : f.v;
+
+        // ãƒ™ã‚¯ãƒˆãƒ«u,vã¯å¤‰ä½ãªã®ã§å›è»¢ã®ã¿
+        vec3 u_rot = rotate_vec_y(u_src, angle_deg);
+        vec3 v_rot = rotate_vec_y(v_src, angle_deg);
 
         quad_scene.push_back(make_gpu_quad(Q_rot, u_rot, v_rot, mat));
     }
 }
 
-// BVH\’z‚Æƒtƒ‰ƒbƒg‰»ŠÖ”
-// –ß‚è’l‚Íƒtƒ‰ƒbƒg”z—ñ‚É‚¨‚¯‚é‚±‚Ìƒm[ƒh‚ÌƒCƒ“ƒfƒbƒNƒX
+// BVHæ§‹ç¯‰ã¨ãƒ•ãƒ©ãƒƒãƒˆåŒ–é–¢æ•°
+// æˆ»ã‚Šå€¤ã¯ãƒ•ãƒ©ãƒƒãƒˆé…åˆ—ã«ãŠã‘ã‚‹ã“ã®ãƒãƒ¼ãƒ‰ã®ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹
 int build_flat_bvh_generic(std::vector<PrimitiveRef>& prims, int start, int end, std::vector<GpuBvhNode>& flat_nodes) {
     int span = end - start;
     int current_node_index = static_cast<int>(flat_nodes.size());
@@ -342,7 +348,7 @@ SceneConfig scene_bouncing_spheres() {
     return sc;
 }
 
-// ‘æ3Í: ƒ`ƒFƒbƒJ[‹…
+// ç¬¬3ç« : ãƒã‚§ãƒƒã‚«ãƒ¼çƒ
 SceneConfig scene_checkered_spheres() {
     SceneConfig sc;
     sc.name = "Checkered Spheres";
@@ -361,7 +367,7 @@ SceneConfig scene_checkered_spheres() {
     return sc;
 }
 
-// ‘æ4Í: ’n‹…‹V (ƒeƒNƒXƒ`ƒƒƒ}ƒbƒsƒ“ƒO)
+// ç¬¬4ç« : åœ°çƒå„€ (ãƒ†ã‚¯ã‚¹ãƒãƒ£ãƒãƒƒãƒ”ãƒ³ã‚°)
 SceneConfig scene_earth() {
     SceneConfig sc;
     sc.name = "Earth";
@@ -376,7 +382,7 @@ SceneConfig scene_earth() {
     return sc;
 }
 
-// ‘æ5Í: ƒp[ƒŠƒ“‘å—Î‹…
+// ç¬¬5ç« : ãƒ‘ãƒ¼ãƒªãƒ³å¤§ç†çŸ³çƒ
 SceneConfig scene_perlin_spheres() {
     SceneConfig sc;
     sc.name = "Perlin Spheres";
@@ -394,7 +400,7 @@ SceneConfig scene_perlin_spheres() {
     return sc;
 }
 
-// ‘æ6Í: lŠpŒ`ƒ|ƒŠƒSƒ“
+// ç¬¬6ç« : å››è§’å½¢ãƒãƒªã‚´ãƒ³
 SceneConfig scene_quads() {
     SceneConfig sc;
     sc.name = "Quads";
@@ -412,7 +418,7 @@ SceneConfig scene_quads() {
     return sc;
 }
 
-// ‘æ7Í: –ÊŒõŒ¹
+// ç¬¬7ç« : é¢å…‰æº
 SceneConfig scene_sample_light() {
     SceneConfig sc;
     sc.name = "Light Sample";
@@ -436,7 +442,7 @@ SceneConfig scene_sample_light() {
     return sc;
 }
 
-// ‘æ8Í: ƒR[ƒlƒ‹ƒ{ƒbƒNƒX
+// ç¬¬8ç« : ã‚³ãƒ¼ãƒãƒ«ãƒœãƒƒã‚¯ã‚¹
 SceneConfig scene_cornell_box() {
     SceneConfig sc;
     sc.name = "Cornell Box";
@@ -464,11 +470,11 @@ SceneConfig scene_cornell_box() {
     return sc;
 }
 
-// ‘æ9Í: ƒR[ƒlƒ‹ƒXƒ‚[ƒN
+// ç¬¬9ç« : ã‚³ãƒ¼ãƒãƒ«ã‚¹ãƒ¢ãƒ¼ã‚¯
 SceneConfig scene_cornell_smoke() {
     SceneConfig sc = scene_cornell_box();
     sc.name = "Cornell Smoke";
-    // ŒÅ‘Ìƒ{ƒbƒNƒXi––”ö‚Ì12–‡‚ÌQuadj‚ğœ‹‚µ‚ÄVolume‚É·‚µ‘Ö‚¦
+    // å›ºä½“ãƒœãƒƒã‚¯ã‚¹ï¼ˆæœ«å°¾ã®12æšã®Quadï¼‰ã‚’é™¤å»ã—ã¦Volumeã«å·®ã—æ›¿ãˆ
     sc.quads.resize(6);
 
     GpuVolume smoke1 = {};
@@ -493,27 +499,27 @@ SceneConfig scene_cornell_smoke() {
     return sc;
 }
 
-// ‘æ10Í: ÅIƒV[ƒ“ level:0,1,2
+// ç¬¬10ç« : æœ€çµ‚ã‚·ãƒ¼ãƒ³ level:0,1,2
 SceneConfig scene_final_scene(int level) {
     SceneConfig sc;
     sc.texture_filename = "earthmap.jpg";
 
     switch (level) {
-    case 0: // ’áİ’è0.6•b’ö“x
+    case 0: // ä½è¨­å®š0.6ç§’ç¨‹åº¦
         sc.image_width = 400;
         sc.image_height = 400;
         sc.total_samples = 250;
         sc.max_depth = 4;
         break;
 
-    case 1: // ’†İ’è40•b’ö“x
+    case 1: // ä¸­è¨­å®š40ç§’ç¨‹åº¦
         sc.image_width = 800;
         sc.image_height = 800;
         sc.total_samples = 1000;
         sc.max_depth = 40;
         break;
 
-    case 2: // Å‚İ’è6•ª’ö“x
+    case 2: // æœ€é«˜è¨­å®š6åˆ†ç¨‹åº¦
         sc.image_width = 800;
         sc.image_height = 800;
         sc.total_samples = 10000;
@@ -529,7 +535,7 @@ SceneConfig scene_final_scene(int level) {
     sc.lookat = point3(278, 278, 0);
     sc.background = color(0.0, 0.0, 0.0);
 
-    // 1. ’n–Ê‚Ìƒ‰ƒ“ƒ_ƒ€’¼•û‘ÌŒQ
+    // 1. åœ°é¢ã®ãƒ©ãƒ³ãƒ€ãƒ ç›´æ–¹ä½“ç¾¤
     GpuMaterial ground_mat = make_solid_material({ 0.48f, 0.83f, 0.53f }, 0, 0.0f);
     int boxes_per_side = 20;
     for (int i = 0; i < boxes_per_side; ++i) {
@@ -544,28 +550,28 @@ SceneConfig scene_final_scene(int level) {
         }
     }
 
-    // 2. “VˆäÆ–¾
+    // 2. å¤©äº•ç…§æ˜
     sc.quads.push_back(make_gpu_quad(point3(123, 554, 147), vec3(300, 0, 0), vec3(0, 0, 265), make_solid_material({ 7.0f, 7.0f, 7.0f }, 3, 0.0f)));
 
-    // 3. Šeí‹…‘Ì
-    sc.spheres.push_back(make_gpu_sphere(point3(400, 400, 200), 50.0f, vec3(30, 0, 0), make_solid_material({ 0.7f, 0.3f, 0.1f }, 0, 0.0f))); // ƒ‚[ƒVƒ‡ƒ“ƒuƒ‰[
-    sc.spheres.push_back(make_gpu_sphere(point3(260, 150, 45), 50.0f, vec3(0, 0, 0), make_solid_material({ 1.0f, 1.0f, 1.0f }, 2, 1.5f)));  // ƒKƒ‰ƒX
-    sc.spheres.push_back(make_gpu_sphere(point3(0, 150, 145), 50.0f, vec3(0, 0, 0), make_solid_material({ 0.8f, 0.8f, 0.9f }, 1, 1.0f)));  // ‹à‘®
-    sc.spheres.push_back(make_gpu_sphere(point3(360, 150, 145), 70.0f, vec3(0, 0, 0), make_solid_material({ 1.0f, 1.0f, 1.0f }, 2, 1.5f)));  // Â‰ŒŠOŠk
+    // 3. å„ç¨®çƒä½“
+    sc.spheres.push_back(make_gpu_sphere(point3(400, 400, 200), 50.0f, vec3(30, 0, 0), make_solid_material({ 0.7f, 0.3f, 0.1f }, 0, 0.0f))); // ãƒ¢ãƒ¼ã‚·ãƒ§ãƒ³ãƒ–ãƒ©ãƒ¼
+    sc.spheres.push_back(make_gpu_sphere(point3(260, 150, 45), 50.0f, vec3(0, 0, 0), make_solid_material({ 1.0f, 1.0f, 1.0f }, 2, 1.5f)));  // ã‚¬ãƒ©ã‚¹
+    sc.spheres.push_back(make_gpu_sphere(point3(0, 150, 145), 50.0f, vec3(0, 0, 0), make_solid_material({ 0.8f, 0.8f, 0.9f }, 1, 1.0f)));  // é‡‘å±
+    sc.spheres.push_back(make_gpu_sphere(point3(360, 150, 145), 70.0f, vec3(0, 0, 0), make_solid_material({ 1.0f, 1.0f, 1.0f }, 2, 1.5f)));  // é’ç…™å¤–æ®»
 
     GpuMaterial earth_mat = {};
     earth_mat.type = 0;
     earth_mat.text_type = 2;
-    sc.spheres.push_back(make_gpu_sphere(point3(400, 200, 400), 100.0f, vec3(0, 0, 0), earth_mat)); // ’n‹…‹V
+    sc.spheres.push_back(make_gpu_sphere(point3(400, 200, 400), 100.0f, vec3(0, 0, 0), earth_mat)); // åœ°çƒå„€
 
     GpuMaterial pertext_mat = {};
     pertext_mat.type = 0;
     pertext_mat.text_type = 3;
     pertext_mat.scale = 0.2f;
     color(1.0f, 1.0f, 1.0f).copy_to(pertext_mat.albedo);
-    sc.spheres.push_back(make_gpu_sphere(point3(220, 280, 300), 80.0f, vec3(0, 0, 0), pertext_mat)); // ‘å—Î
+    sc.spheres.push_back(make_gpu_sphere(point3(220, 280, 300), 80.0f, vec3(0, 0, 0), pertext_mat)); // å¤§ç†çŸ³
 
-    // 4. ¬‹…‘ÌƒNƒ‰ƒXƒ^[ (1000ŒÂ)
+    // 4. å°çƒä½“ã‚¯ãƒ©ã‚¹ã‚¿ãƒ¼ (1000å€‹)
     GpuMaterial white = make_solid_material({ 0.73f, 0.73f, 0.73f }, 0, 0.0f);
     for (int j = 0; j < 1000; ++j) {
         point3 p(random_double(0, 165), random_double(0, 165), random_double(0, 165));
@@ -573,7 +579,7 @@ SceneConfig scene_final_scene(int level) {
         sc.spheres.push_back(make_gpu_sphere(p_trans, 10.0f, vec3(0, 0, 0), white));
     }
 
-    // 5. Q‰Á”}¿ƒ{ƒŠƒ…[ƒ€
+    // 5. å‚åŠ åª’è³ªãƒœãƒªãƒ¥ãƒ¼ãƒ 
     GpuVolume blue_smoke = {};
     blue_smoke.shape_type = 0;
     blue_smoke.density = 0.2f;
@@ -593,6 +599,96 @@ SceneConfig scene_final_scene(int level) {
     return sc;
 }
 
+// ---------------------------------------------------
+// æ–°è¦ã‚·ãƒ¼ãƒ³ï¼šãƒŸãƒ©ãƒ¼ãƒã‚¦ã‚¹ï¼ˆåˆã‚ã›é¡ã«ã‚ˆã‚‹ç„¡é™åå°„ãƒ†ã‚¹ãƒˆï¼‰
+// ---------------------------------------------------
+SceneConfig scene_mirror_house(int level) {
+    SceneConfig sc;
+
+    switch (level) {
+    case 0: // ä½è¨­å®š40ç§’ç¨‹åº¦
+        sc.image_width = 800;
+        sc.image_height = 800;
+        sc.total_samples = 1000;
+        sc.max_depth = 40;
+        break;
+
+    case 1: // é«˜è¨­å®š2åˆ†ç¨‹åº¦
+        sc.image_width = 800;
+        sc.image_height = 800;
+        sc.total_samples = 10000;
+        sc.max_depth = 50;          // åˆã‚ã›é¡ã®å¥¥æ·±ãã¾ã§åå°„ã‚’è¿½è·¡ã™ã‚‹ãŸã‚æ·±ã‚ã«è¨­å®š
+        break;
+    }
+
+    sc.name = "MirrorHouse (Level:" + std::to_string(level) + ")";
+    sc.samples_per_pass = 25;
+
+    sc.vfov = 60.0;
+    // éƒ¨å±‹ã®å†…å´ã€æ‰‹å‰ã®å£ã«å°‘ã—å¯„ã£ãŸä½ç½®ã«ã‚«ãƒ¡ãƒ©ã‚’é…ç½®ã—ã€å¥¥ã‚’è¦‹ã¤ã‚ã‚‹
+    sc.lookfrom = point3(0, 5.0, 4.5);
+    sc.lookat = point3(0, 4.0, 0);
+    sc.vup = vec3(0, 1, 0);
+    sc.background = color(0, 0, 0); // å¯†å®¤ã®ãŸã‚èƒŒæ™¯è‰²ã¯è¦‹ãˆã¾ã›ã‚“
+
+    sc.defocus_angle = 0.3; // ã‚ãšã‹ãªãƒœã‚±ï¼ˆ0.2ã€œ0.5ç¨‹åº¦ï¼‰
+    sc.focus_dist = 3.5;    // æ‰‹å‰ã®ã‚¬ãƒ©ã‚¹çƒãƒ»é’çƒã‚ãŸã‚Šã«ãƒ”ãƒ³ãƒˆã‚’åˆã‚ã›ã‚‹
+
+    // ãƒãƒ†ãƒªã‚¢ãƒ«å®šç¾©
+    GpuMaterial floor_mat = {};
+    floor_mat.type = 0;
+    floor_mat.text_type = 1; // ç©ºé–“ã®åºƒãŒã‚ŠãŒåˆ†ã‹ã‚Šã‚„ã™ã„ã‚ˆã†ã«åºŠã‚’ãƒã‚§ãƒƒã‚«ãƒ¼ã«
+    floor_mat.scale = 2.0f;
+    color(0.2f, 0.2f, 0.2f).copy_to(floor_mat.albedo);
+    color(0.9f, 0.9f, 0.9f).copy_to(floor_mat.albedo2);
+
+    GpuMaterial ceiling_mat = make_solid_material({ 0.8f, 0.8f, 0.8f }, 0, 0.0f);
+    // åå°„ç‡100%ã€ç²—ã•0ã®å®Œå…¨ãªé¡
+    //GpuMaterial mirror_mat = make_solid_material({ 1.0f, 1.0f, 1.0f }, 1, 0.0f);
+
+    // ã€ä¿®æ­£å¾Œã€‘åå°„ç‡ç´„92ã€œ95% + ã‚¬ãƒ©ã‚¹é‰„åˆ†ã«ã‚ˆã‚‹ç·‘è‰²ã‚·ãƒ•ãƒˆ
+    GpuMaterial mirror_mat = make_solid_material({ 0.91f, 0.95f, 0.90f }, 1, 0.0f);
+
+    GpuMaterial light_mat = make_solid_material({ 10.0f, 10.0f, 10.0f }, 3, 0.0f);
+
+    // å››è§’å½¢ã§10x10x10ã®éƒ¨å±‹ã‚’æ§‹ç¯‰
+    // åºŠ (Y = 0)
+    sc.quads.push_back(make_gpu_quad(point3(-5, 0, 5), vec3(10, 0, 0), vec3(0, 0, -10), floor_mat));
+    // å¤©äº• (Y = 10)
+    sc.quads.push_back(make_gpu_quad(point3(-5, 10, -5), vec3(10, 0, 0), vec3(0, 0, 10), ceiling_mat));
+
+    // å¤©äº•ã®ä¸­å¤®ã«å…‰æº (4x4ã®ãƒ‘ãƒãƒ«ãƒ©ã‚¤ãƒˆã€æ³•ç·šãŒ -Y: ä¸‹å‘ãã«ãªã‚‹ã‚ˆã†ã« Q ã¨ v ã‚’è¨­å®š)
+    sc.quads.push_back(make_gpu_quad(point3(-2, 9.99, 2), vec3(4, 0, 0), vec3(0, 0, 4), light_mat));
+
+    // éš™é–“
+    const double buffer = 0.01;
+    float mirror_size = 10.0f;
+    float mirror_half = mirror_size / 2.0f;
+
+#if true
+    // å£4é¢ (ã™ã¹ã¦åˆã‚ã›é¡)
+    sc.quads.push_back(make_gpu_quad(point3(-mirror_half, 0, mirror_half), vec3(0, 0, -mirror_size), vec3(0, mirror_size, 0), mirror_mat)); // å·¦å£
+    sc.quads.push_back(make_gpu_quad(point3(mirror_half, 0, -mirror_half), vec3(0, 0, mirror_size), vec3(0, mirror_size, 0), mirror_mat));  // å³å£
+    sc.quads.push_back(make_gpu_quad(point3(-mirror_half, 0, -mirror_half), vec3(mirror_size, 0, 0), vec3(0, mirror_size, 0), mirror_mat)); // å¥¥å£
+    // æ‰‹å‰å£ (ã‚«ãƒ¡ãƒ©èƒŒå¾Œã‚‚é¡ã«ã™ã‚‹ã“ã¨ã§ç„¡é™ãƒ«ãƒ¼ãƒ—ã‚’èª˜ç™º)
+    sc.quads.push_back(make_gpu_quad(point3(mirror_half, 0, mirror_half), vec3(-mirror_size, 0, 0), vec3(0, mirror_size, 0), mirror_mat));
+#else
+    // 10x10x10 ã®å†…å‘ãã®é¡ã®éƒ¨å±‹ã‚’ä¸€ç™ºã§ç”Ÿæˆ
+    add_box(point3(-5, 0, -5), point3(5, 10, 5), mirror_mat, 0.0, vec3(0, 0, 0), sc.quads, true);
+#endif
+
+
+    // ä¸­å¤®ã«é…ç½®ã™ã‚‹ã‚ªãƒ–ã‚¸ã‚§ã‚¯ãƒˆ
+    // 1. é’ã„ãƒ‡ã‚£ãƒ•ãƒ¥ãƒ¼ã‚ºçƒ
+    sc.spheres.push_back(make_gpu_sphere(point3(-2.0, 2.0, -1.0), 1.5f, vec3(0, 0, 0), make_solid_material({ 0.2f, 0.2f, 0.8f }, 0, 0.0f)));
+    // 2. ã‚¬ãƒ©ã‚¹çƒ (å±ˆæŠ˜ã¨å…¨åå°„ãŒé¡ã«ã©ã†æ˜ ã‚‹ã‹ã®ãƒ†ã‚¹ãƒˆ)
+    sc.spheres.push_back(make_gpu_sphere(point3(0.0, 2.0, 1.5), 1.5f, vec3(0, 0, 0), make_solid_material({ 1.0f, 1.0f, 1.0f }, 2, 1.5f)));
+    // 3. èµ¤ã„é‡‘å±çƒ (å°‘ã—ç²—ã•ã‚’æŒãŸã›ãŸé‡‘å±)
+    sc.spheres.push_back(make_gpu_sphere(point3(2.5, 1.5, -2.0), 1.0f, vec3(0, 0, 0), make_solid_material({ 0.8f, 0.2f, 0.2f }, 1, 0.2f)));
+
+    return sc;
+}
+
 template<typename T>
 void create_structured_buffer_and_srv(
     ID3D11Device* device,
@@ -600,7 +696,7 @@ void create_structured_buffer_and_srv(
     ComPtr<ID3D11Buffer>& out_buffer,
     ComPtr<ID3D11ShaderResourceView>& out_srv)
 {
-    // ƒTƒCƒY‚Ì0ƒoƒbƒtƒ@ì¬ƒGƒ‰[‚ğ–h‚®‚½‚ß‚ÉÅ’á1—v‘f‚ğŠm•Û
+    // ã‚µã‚¤ã‚ºã®0ãƒãƒƒãƒ•ã‚¡ä½œæˆã‚¨ãƒ©ãƒ¼ã‚’é˜²ããŸã‚ã«æœ€ä½1è¦ç´ ã‚’ç¢ºä¿
     std::vector<T> safe_data = data.empty() ? std::vector<T>(1) : data;
 
     D3D11_BUFFER_DESC desc = {};
@@ -628,20 +724,28 @@ void create_image_texture_and_srv(
     ComPtr<ID3D11Texture2D>& out_tex,
     ComPtr<ID3D11ShaderResourceView>& out_srv)
 {
-    rtw_image img(filename.empty() ? "" : filename.c_str());
-    UINT width = static_cast<UINT>(img.width() > 0 ? img.width() : 1);
-    UINT height = static_cast<UINT>(img.height() > 0 ? img.height() : 1);
+    UINT width = 1;
+    UINT height = 1;
 
-    std::vector<uint8_t> rgba_data(width * height * 4, 255);
-    if (img.width() > 0) {
-        for (UINT y = 0; y < height; ++y) {
-            for (UINT x = 0; x < width; ++x) {
-                auto p = img.pixel_data(x, y);
-                size_t idx = (y * width + x) * 4;
-                rgba_data[idx + 0] = p[0];
-                rgba_data[idx + 1] = p[1];
-                rgba_data[idx + 2] = p[2];
-                rgba_data[idx + 3] = 255;
+    std::vector<uint8_t> rgba_data = { 255, 255, 255, 255 }; // ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆã¯1x1ã®ç™½ãƒ”ã‚¯ã‚»ãƒ«
+
+    // ãƒ•ã‚¡ã‚¤ãƒ«åãŒæŒ‡å®šã•ã‚Œã¦ã„ã‚‹å ´åˆã®ã¿rtw_imageã‚’å‘¼ã³å‡ºã™
+    if (!filename.empty()) {
+        rtw_image img(filename.c_str());
+        if (img.width() > 0 && img.height() > 0) {
+            width = static_cast<UINT>(img.width() > 0 ? img.width() : 1);
+            height = static_cast<UINT>(img.height() > 0 ? img.height() : 1);
+            rgba_data.resize(width * height * 4);
+
+            for (UINT y = 0; y < height; ++y) {
+                for (UINT x = 0; x < width; ++x) {
+                    auto p = img.pixel_data(x, y);
+                    size_t idx = (y * width + x) * 4;
+                    rgba_data[idx + 0] = p[0];
+                    rgba_data[idx + 1] = p[1];
+                    rgba_data[idx + 2] = p[2];
+                    rgba_data[idx + 3] = 255;
+                }
             }
         }
     }
@@ -671,27 +775,27 @@ int run_gpu_renderer(const SceneConfig sc) {
     //-----------------------------------------------------------------------------------------------
     std::clog << "Initialize DirectX 11 for [" << sc.name << "]...\n";
 
-    // ƒfƒoƒCƒX‚ÆƒRƒ“ƒeƒLƒXƒg‚ğŠi”[‚·‚éƒXƒ}[ƒgƒ|ƒCƒ“ƒ^
+    // ãƒ‡ãƒã‚¤ã‚¹ã¨ã‚³ãƒ³ãƒ†ã‚­ã‚¹ãƒˆã‚’æ ¼ç´ã™ã‚‹ã‚¹ãƒãƒ¼ãƒˆãƒã‚¤ãƒ³ã‚¿
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
 
-    // —v‹‚·‚é‹@”\ƒŒƒxƒ‹(Directx 11.0‚Ü‚½‚Í11.1)
+    // è¦æ±‚ã™ã‚‹æ©Ÿèƒ½ãƒ¬ãƒ™ãƒ«(Directx 11.0ã¾ãŸã¯11.1)
     D3D_FEATURE_LEVEL featureLevels[] = {
         D3D_FEATURE_LEVEL_11_1,
         D3D_FEATURE_LEVEL_11_0
     };
 
     HRESULT hr = D3D11CreateDevice(
-        nullptr,                    // ƒfƒtƒHƒ‹ƒg‚ÌƒAƒ_ƒvƒ^[‚ğg—p
-        D3D_DRIVER_TYPE_HARDWARE,   // GPUƒn[ƒhƒEƒFƒAƒAƒNƒZƒ‰ƒŒ[ƒVƒ‡ƒ“
-        nullptr,                    // ƒ\ƒtƒgƒEƒFƒAƒ‚ƒWƒ…[ƒ‹i–¢g—pj
-        D3D11_CREATE_DEVICE_DEBUG,  // ƒfƒoƒbƒOƒŒƒCƒ„[—LŒøiŠJ”­‚Ì‚İj
-        featureLevels,              // —v‹‚·‚é‹@”\ƒŒƒxƒ‹”z—ñ
-        ARRAYSIZE(featureLevels),   // ”z—ñ‚Ì—v‘f”
-        D3D11_SDK_VERSION,          // SDKƒo[ƒWƒ‡ƒ“
-        &device,                    // [o—Í] ƒfƒoƒCƒXƒ|ƒCƒ“ƒ^
-        nullptr,                    // [o—Í] ÀÛ‚Ég—p‚³‚ê‚é‹@”\ƒŒƒxƒ‹
-        &context                    // [o—Í] ƒRƒ“ƒeƒLƒXƒgƒ|ƒCƒ“ƒ^
+        nullptr,                    // ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆã®ã‚¢ãƒ€ãƒ—ã‚¿ãƒ¼ã‚’ä½¿ç”¨
+        D3D_DRIVER_TYPE_HARDWARE,   // GPUãƒãƒ¼ãƒ‰ã‚¦ã‚§ã‚¢ã‚¢ã‚¯ã‚»ãƒ©ãƒ¬ãƒ¼ã‚·ãƒ§ãƒ³
+        nullptr,                    // ã‚½ãƒ•ãƒˆã‚¦ã‚§ã‚¢ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«ï¼ˆæœªä½¿ç”¨ï¼‰
+        D3D11_CREATE_DEVICE_DEBUG,  // ãƒ‡ãƒãƒƒã‚°ãƒ¬ã‚¤ãƒ¤ãƒ¼æœ‰åŠ¹ï¼ˆé–‹ç™ºæ™‚ã®ã¿ï¼‰
+        featureLevels,              // è¦æ±‚ã™ã‚‹æ©Ÿèƒ½ãƒ¬ãƒ™ãƒ«é…åˆ—
+        ARRAYSIZE(featureLevels),   // é…åˆ—ã®è¦ç´ æ•°
+        D3D11_SDK_VERSION,          // SDKãƒãƒ¼ã‚¸ãƒ§ãƒ³
+        &device,                    // [å‡ºåŠ›] ãƒ‡ãƒã‚¤ã‚¹ãƒã‚¤ãƒ³ã‚¿
+        nullptr,                    // [å‡ºåŠ›] å®Ÿéš›ã«ä½¿ç”¨ã•ã‚Œã‚‹æ©Ÿèƒ½ãƒ¬ãƒ™ãƒ«
+        &context                    // [å‡ºåŠ›] ã‚³ãƒ³ãƒ†ã‚­ã‚¹ãƒˆãƒã‚¤ãƒ³ã‚¿
     );
 
     CheckHR(hr);
@@ -699,54 +803,54 @@ int run_gpu_renderer(const SceneConfig sc) {
     std::clog << "DirectX 11 initialized successfully!" << std::endl;
 
     //-----------------------------------------------------------------------------------------------
-    // Compute Shader ‚ÌƒRƒ“ƒpƒCƒ‹‚Æ“o˜^
+    // Compute Shader ã®ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«ã¨ç™»éŒ²
     //-----------------------------------------------------------------------------------------------
-    // ƒGƒ‰[ƒƒbƒZ[ƒW‚ğŠi”[‚·‚é‚½‚ß‚Ì•Ï”
+    // ã‚¨ãƒ©ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã‚’æ ¼ç´ã™ã‚‹ãŸã‚ã®å¤‰æ•°
     ComPtr<ID3DBlob> errorBlob;
-    // ƒRƒ“ƒpƒCƒ‹Ï‚İ‚ÌƒVƒF[ƒ_[ƒoƒCƒiƒŠ‚ğŠi”[‚·‚é•Ï”
+    // ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«æ¸ˆã¿ã®ã‚·ã‚§ãƒ¼ãƒ€ãƒ¼ãƒã‚¤ãƒŠãƒªã‚’æ ¼ç´ã™ã‚‹å¤‰æ•°
     ComPtr<ID3DBlob> shaderBlob;
 
     std::clog << "Compiling Compute Shader..." << std::endl;
 
-    UINT compileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3; // Å‚ƒŒƒxƒ‹‚ÌÅ“K‰»
+    UINT compileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3; // æœ€é«˜ãƒ¬ãƒ™ãƒ«ã®æœ€é©åŒ–
 #ifdef _DEBUG
     compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
     hr = D3DCompileFromFile(
-        L"shader/RayTracingCS.hlsl",    // ƒVƒF[ƒ_[ƒtƒ@ƒCƒ‹–¼i“¯‚¶ŠK‘w‚É”z’uj
-        nullptr,                        // ƒ}ƒNƒ’è‹`i‚È‚µj
-        nullptr,                        // ƒCƒ“ƒNƒ‹[ƒhƒCƒ“ƒ^[ƒtƒF[ƒXi‚È‚µj
-        "CSMain",                       // ƒGƒ“ƒgƒŠ[ƒ|ƒCƒ“ƒgŠÖ”–¼
-        "cs_5_0",                       // ƒVƒF[ƒ_[ƒvƒƒtƒ@ƒCƒ‹iCS 5.0j
-        compileFlags,                              // ƒRƒ“ƒpƒCƒ‹ƒtƒ‰ƒOiÅ“K‰»‚È‚Çj
-        0,                              // ƒGƒtƒFƒNƒgƒtƒ‰ƒOi‚È‚µj
-        &shaderBlob,                    // [o—Í] ƒRƒ“ƒpƒCƒ‹‚³‚ê‚½ƒoƒCƒiƒŠ
-        &errorBlob                      // [o—Í] ƒGƒ‰[ƒƒbƒZ[ƒW
+        L"shader/RayTracingCS.hlsl",    // ã‚·ã‚§ãƒ¼ãƒ€ãƒ¼ãƒ•ã‚¡ã‚¤ãƒ«åï¼ˆåŒã˜éšå±¤ã«é…ç½®ï¼‰
+        nullptr,                        // ãƒã‚¯ãƒ­å®šç¾©ï¼ˆãªã—ï¼‰
+        nullptr,                        // ã‚¤ãƒ³ã‚¯ãƒ«ãƒ¼ãƒ‰ã‚¤ãƒ³ã‚¿ãƒ¼ãƒ•ã‚§ãƒ¼ã‚¹ï¼ˆãªã—ï¼‰
+        "CSMain",                       // ã‚¨ãƒ³ãƒˆãƒªãƒ¼ãƒã‚¤ãƒ³ãƒˆé–¢æ•°å
+        "cs_5_0",                       // ã‚·ã‚§ãƒ¼ãƒ€ãƒ¼ãƒ—ãƒ­ãƒ•ã‚¡ã‚¤ãƒ«ï¼ˆCS 5.0ï¼‰
+        compileFlags,                              // ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«ãƒ•ãƒ©ã‚°ï¼ˆæœ€é©åŒ–ãªã©ï¼‰
+        0,                              // ã‚¨ãƒ•ã‚§ã‚¯ãƒˆãƒ•ãƒ©ã‚°ï¼ˆãªã—ï¼‰
+        &shaderBlob,                    // [å‡ºåŠ›] ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«ã•ã‚ŒãŸãƒã‚¤ãƒŠãƒª
+        &errorBlob                      // [å‡ºåŠ›] ã‚¨ãƒ©ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸
     );
 
-    // ƒRƒ“ƒpƒCƒ‹ƒGƒ‰[‚Ìƒnƒ“ƒhƒŠƒ“ƒO
+    // ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«ã‚¨ãƒ©ãƒ¼ã®ãƒãƒ³ãƒ‰ãƒªãƒ³ã‚°
     if (FAILED(hr)) {
         if (errorBlob) {
-            // errorBlob‚©‚çƒGƒ‰[ƒƒbƒZ[ƒW‚Ì•¶š—ñ‚ğæ‚èo‚µ‚Ä•\¦
+            // errorBlobã‹ã‚‰ã‚¨ãƒ©ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã®æ–‡å­—åˆ—ã‚’å–ã‚Šå‡ºã—ã¦è¡¨ç¤º
             std::string errorMsg(static_cast<const char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
             std::cerr << "Shader CompilationError:\n" << errorMsg << std::endl;
         }
         else {
-            // errorBlob ‚ª nullptr ‚Ìê‡‚Íƒtƒ@ƒCƒ‹ƒAƒNƒZƒXü‚è‚ÌƒGƒ‰[
+            // errorBlob ãŒ nullptr ã®å ´åˆã¯ãƒ•ã‚¡ã‚¤ãƒ«ã‚¢ã‚¯ã‚»ã‚¹å‘¨ã‚Šã®ã‚¨ãƒ©ãƒ¼
             std::cerr << "Shader File Error (File not found or inaccessible). HRESULT: 0x"
                 << std::hex << hr << std::dec << std::endl;
         }
         throw std::runtime_error("Failed to compile Compute Shader");
     }
 
-    // ƒfƒoƒCƒX‚ğg‚Á‚ÄƒRƒ“ƒpƒCƒ‹Ï‚İƒoƒCƒiƒŠ‚©‚çComputeShaderƒIƒuƒWƒFƒNƒg‚ğì¬
+    // ãƒ‡ãƒã‚¤ã‚¹ã‚’ä½¿ã£ã¦ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«æ¸ˆã¿ãƒã‚¤ãƒŠãƒªã‹ã‚‰ComputeShaderã‚ªãƒ–ã‚¸ã‚§ã‚¯ãƒˆã‚’ä½œæˆ
     ComPtr<ID3D11ComputeShader> computeShader;
     hr = device->CreateComputeShader(
-        shaderBlob->GetBufferPointer(),     // ƒRƒ“ƒpƒCƒ‹Ï‚İ‚ÌƒoƒCƒiƒŠ‚Ìƒ|ƒCƒ“ƒ^
-        shaderBlob->GetBufferSize(),        // ƒoƒCƒiƒŠ‚ÌƒTƒCƒY
-        nullptr,                            // ƒNƒ‰ƒXƒŠƒ“ƒP[ƒWi‚È‚µj
-        &computeShader                      // [o—Í] ì¬‚³‚ê‚½ComputeShaderƒIƒuƒWƒFƒNƒg
+        shaderBlob->GetBufferPointer(),     // ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«æ¸ˆã¿ã®ãƒã‚¤ãƒŠãƒªã®ãƒã‚¤ãƒ³ã‚¿
+        shaderBlob->GetBufferSize(),        // ãƒã‚¤ãƒŠãƒªã®ã‚µã‚¤ã‚º
+        nullptr,                            // ã‚¯ãƒ©ã‚¹ãƒªãƒ³ã‚±ãƒ¼ã‚¸ï¼ˆãªã—ï¼‰
+        &computeShader                      // [å‡ºåŠ›] ä½œæˆã•ã‚ŒãŸComputeShaderã‚ªãƒ–ã‚¸ã‚§ã‚¯ãƒˆ
     );
 
     CheckHR(hr);
@@ -754,9 +858,9 @@ int run_gpu_renderer(const SceneConfig sc) {
     std::clog << "Compute Shader compiled and created successfully!" << std::endl;
 
     //-----------------------------------------------------------------------------------------------
-    // ƒŠƒ\[ƒX—pƒoƒbƒtƒ@iƒIƒuƒWƒFƒNƒgABVHAƒeƒNƒXƒ`ƒƒj
+    // ãƒªã‚½ãƒ¼ã‚¹ç”¨ãƒãƒƒãƒ•ã‚¡ï¼ˆã‚ªãƒ–ã‚¸ã‚§ã‚¯ãƒˆã€BVHã€ãƒ†ã‚¯ã‚¹ãƒãƒ£ï¼‰
     //-----------------------------------------------------------------------------------------------
-    // BVH—pQÆƒŠƒXƒg‚Ì“‡
+    // BVHç”¨å‚ç…§ãƒªã‚¹ãƒˆã®çµ±åˆ
     std::vector<PrimitiveRef> prim_refs;
     for (size_t i = 0; i < sc.spheres.size(); ++i) {
         prim_refs.emplace_back(
@@ -780,7 +884,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     std::vector<GpuBvhNode> bvh_nodes;
     build_flat_bvh_generic(prim_refs, 0, static_cast<int>(prim_refs.size()), bvh_nodes);
 
-    // ƒoƒbƒtƒ@ƒŠƒ\[ƒX‚Ìì¬it0, t1, t3, t4j
+    // ãƒãƒƒãƒ•ã‚¡ãƒªã‚½ãƒ¼ã‚¹ã®ä½œæˆï¼ˆt0, t1, t3, t4ï¼‰
     ComPtr<ID3D11Buffer> sphereBuffer, bvhBuffer, quadBuffer, volBuffer;
     ComPtr<ID3D11ShaderResourceView> sphereSRV, bvhSRV, quadSRV, volSRV;
     create_structured_buffer_and_srv(device.Get(), sc.spheres,  sphereBuffer,   sphereSRV);
@@ -788,7 +892,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     create_structured_buffer_and_srv(device.Get(), sc.quads,    quadBuffer,     quadSRV);
     create_structured_buffer_and_srv(device.Get(), sc.volumes,  volBuffer,      volSRV);
 
-    // ƒeƒNƒXƒ`ƒƒ‚ÆƒTƒ“ƒvƒ‰[‚Ìì¬it2, s0j
+    // ãƒ†ã‚¯ã‚¹ãƒãƒ£ã¨ã‚µãƒ³ãƒ—ãƒ©ãƒ¼ã®ä½œæˆï¼ˆt2, s0ï¼‰
     ComPtr<ID3D11Texture2D> imageTex;
     ComPtr<ID3D11ShaderResourceView> imageSRV;
     create_image_texture_and_srv(device.Get(), sc.texture_filename, imageTex, imageSRV);
@@ -803,9 +907,9 @@ int run_gpu_renderer(const SceneConfig sc) {
     CheckHR(device->CreateSamplerState(&sampDesc, &linearSampler));
 
     //-----------------------------------------------------------------------------------------------
-    // ƒJƒƒ‰’è”ƒoƒbƒtƒ@
+    // ã‚«ãƒ¡ãƒ©å®šæ•°ãƒãƒƒãƒ•ã‚¡
     //-----------------------------------------------------------------------------------------------
-    // ‰Šú‰»
+    // åˆæœŸåŒ–
     auto image_width = static_cast<double>(sc.image_width);
     auto image_height = static_cast<double>(sc.image_height);
     auto theta = degrees_to_radians(sc.vfov);
@@ -830,7 +934,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     auto defocus_disk_u = u * defocus_radius;
     auto defocus_disk_v = v * defocus_radius;
 
-    // ƒoƒbƒtƒ@“]‘——pƒf[ƒ^‚ÉŠi”[
+    // ãƒãƒƒãƒ•ã‚¡è»¢é€ç”¨ãƒ‡ãƒ¼ã‚¿ã«æ ¼ç´
     CameraBufferData cbData = {};
     sc.lookfrom.copy_to(cbData.camera_center);
     pixel00_loc.copy_to(cbData.pixel00_loc);
@@ -844,12 +948,12 @@ int run_gpu_renderer(const SceneConfig sc) {
     cbData.max_depth            = sc.max_depth;
     cbData.defocus_angle        = static_cast<float>(sc.defocus_angle);
 
-    // ƒTƒ“ƒvƒŠƒ“ƒOŒõŒ¹‚ğƒŠƒXƒgƒAƒbƒv
-    // “VˆäÆ–¾AƒKƒ‰ƒX‹…‚È‚Ç‚ğw’è‰Â”\
+    // ã‚µãƒ³ãƒ—ãƒªãƒ³ã‚°å…‰æºã‚’ãƒªã‚¹ãƒˆã‚¢ãƒƒãƒ—
+    // å¤©äº•ç…§æ˜ã€ã‚¬ãƒ©ã‚¹çƒãªã©ã‚’æŒ‡å®šå¯èƒ½
     int target_count = 0;
     const static int MAX_LIGHT_TARGETS = 4;
 
-    // 1. ”­ŒõQuad‚ğ’Ç‰Á
+    // 1. ç™ºå…‰Quadã‚’è¿½åŠ 
     for (size_t i = 0; i < sc.quads.size() && target_count < MAX_LIGHT_TARGETS; ++i) {
         if (sc.quads[i].mat.type == 3) {
             cbData.light_target_data[target_count][0] = 1; // 1: Quad
@@ -858,7 +962,7 @@ int run_gpu_renderer(const SceneConfig sc) {
         }
     }
 
-    // 2. ”­ŒõSphere‚ğ’Ç‰Á
+    // 2. ç™ºå…‰Sphereã‚’è¿½åŠ 
     for (size_t i = 0; i < sc.spheres.size() && target_count < MAX_LIGHT_TARGETS; ++i) {
         if (sc.spheres[i].mat.type == 3) {
             cbData.light_target_data[target_count][0] = 2; // 2: Sphere
@@ -868,9 +972,9 @@ int run_gpu_renderer(const SceneConfig sc) {
     }
     cbData.num_light_targets = target_count;
 
-    // ’è”ƒoƒbƒtƒ@‚Ìì¬
+    // å®šæ•°ãƒãƒƒãƒ•ã‚¡ã®ä½œæˆ
     D3D11_BUFFER_DESC cbDesc = {};
-    cbDesc.ByteWidth = sizeof(CameraBufferData);    // 16‚Ì”{”
+    cbDesc.ByteWidth = sizeof(CameraBufferData);    // 16ã®å€æ•°
     cbDesc.Usage = D3D11_USAGE_DEFAULT;
     cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     D3D11_SUBRESOURCE_DATA cbInit = {};
@@ -879,7 +983,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     CheckHR(device->CreateBuffer(&cbDesc, &cbInit, &cameraBuffer));
 
     //-----------------------------------------------------------------------------------------------
-    // GPU‘‚«‚İ—pƒeƒNƒXƒ`ƒƒiDefaultj& UAV(Unordered Access ViewF‡˜‚È‚µƒAƒNƒZƒXƒrƒ…[)‚Ìì¬
+    // GPUæ›¸ãè¾¼ã¿ç”¨ãƒ†ã‚¯ã‚¹ãƒãƒ£ï¼ˆDefaultï¼‰& UAV(Unordered Access Viewï¼šé †åºãªã—ã‚¢ã‚¯ã‚»ã‚¹ãƒ“ãƒ¥ãƒ¼)ã®ä½œæˆ
     //-----------------------------------------------------------------------------------------------
     D3D11_TEXTURE2D_DESC texDesc = {};
     texDesc.Width = sc.image_width;
@@ -900,7 +1004,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     CheckHR(device->CreateUnorderedAccessView(outputTexture.Get(), &uavDesc, &uav));
 
     //-----------------------------------------------------------------------------------------------
-    // CPU“Ç‚İæ‚è—pƒXƒe[ƒWƒ“ƒOƒeƒNƒXƒ`ƒƒ(Staging)‚Ìì¬
+    // CPUèª­ã¿å–ã‚Šç”¨ã‚¹ãƒ†ãƒ¼ã‚¸ãƒ³ã‚°ãƒ†ã‚¯ã‚¹ãƒãƒ£(Staging)ã®ä½œæˆ
     //-----------------------------------------------------------------------------------------------
     D3D11_TEXTURE2D_DESC stagingDesc = texDesc;
     stagingDesc.Usage = D3D11_USAGE_STAGING;
@@ -910,7 +1014,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     CheckHR(device->CreateTexture2D(&stagingDesc, nullptr, &stagingTexture));
 
     //-----------------------------------------------------------------------------------------------
-    // GPU“¯Šú—pƒCƒxƒ“ƒgƒNƒGƒŠ‚Ìì¬
+    // GPUåŒæœŸç”¨ã‚¤ãƒ™ãƒ³ãƒˆã‚¯ã‚¨ãƒªã®ä½œæˆ
     //-----------------------------------------------------------------------------------------------
     D3D11_QUERY_DESC queryDesc = {};
     queryDesc.Query = D3D11_QUERY_EVENT;
@@ -918,7 +1022,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     CheckHR(device->CreateQuery(&queryDesc, &query));
 
     //-----------------------------------------------------------------------------------------------
-    // ƒpƒCƒvƒ‰ƒCƒ“ƒoƒCƒ“ƒh
+    // ãƒ‘ã‚¤ãƒ—ãƒ©ã‚¤ãƒ³ãƒã‚¤ãƒ³ãƒ‰
     //-----------------------------------------------------------------------------------------------
     context->CSSetShader(computeShader.Get(), nullptr, 0);
     ID3D11ShaderResourceView* srvArray[] = { sphereSRV.Get(), bvhSRV.Get(), imageSRV.Get(), quadSRV.Get(), volSRV.Get() };
@@ -930,7 +1034,7 @@ int run_gpu_renderer(const SceneConfig sc) {
     ID3D11UnorderedAccessView* uavArray[] = { uav.Get() };
     context->CSSetUnorderedAccessViews(0, 1, uavArray, nullptr);
 
-    // ƒXƒŒƒbƒhƒOƒ‹[ƒv”‚ğŒvZi1ƒOƒ‹[ƒv‚ ‚½‚è16x16 = 256ƒXƒŒƒbƒhj
+    // ã‚¹ãƒ¬ãƒƒãƒ‰ã‚°ãƒ«ãƒ¼ãƒ—æ•°ã‚’è¨ˆç®—ï¼ˆ1ã‚°ãƒ«ãƒ¼ãƒ—ã‚ãŸã‚Š16x16 = 256ã‚¹ãƒ¬ãƒƒãƒ‰ï¼‰
     UINT dispatchX = (sc.image_width + 15) / 16;
     UINT dispatchY = (sc.image_height + 15) / 16;
     int num_pass = sc.total_samples / sc.samples_per_pass;
@@ -939,21 +1043,21 @@ int run_gpu_renderer(const SceneConfig sc) {
     std::clog << "Rendering [" << sc.name <<  "] (" << sc.total_samples << " samples, " << sc.max_depth << " depth)...\n";
 
     for (int pass = 0; pass < num_pass; ++pass) {
-        // ƒpƒX”Ô†‚ğ’è”ƒoƒbƒtƒ@‚ÉXV
+        // ãƒ‘ã‚¹ç•ªå·ã‚’å®šæ•°ãƒãƒƒãƒ•ã‚¡ã«æ›´æ–°
         cbData.pass_index = pass;
         context->UpdateSubresource(cameraBuffer.Get(), 0, nullptr, &cbData, 0, 0);
 
-        // 1ƒpƒX•ª(50ƒTƒ“ƒvƒ‹)‚ğÀs
+        // 1ãƒ‘ã‚¹åˆ†(50ã‚µãƒ³ãƒ—ãƒ«)ã‚’å®Ÿè¡Œ
         context->Dispatch(dispatchX, dispatchY, 1);
 
-        // GPU‚ÉƒCƒxƒ“ƒg‚ğ”­s‚µA‚±‚ÌƒpƒX‚ÌŠ®—¹‚ğ‘Ò‹@
+        // GPUã«ã‚¤ãƒ™ãƒ³ãƒˆã‚’ç™ºè¡Œã—ã€ã“ã®ãƒ‘ã‚¹ã®å®Œäº†ã‚’å¾…æ©Ÿ
         context->End(query.Get());
         while (context->GetData(query.Get(), nullptr, 0, 0) == S_FALSE) {
-            // 1ƒ~ƒŠ•bƒXƒŠ[ƒv
+            // 1ãƒŸãƒªç§’ã‚¹ãƒªãƒ¼ãƒ—
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
-        // i’»‚ÌŒvZ
+        // é€²æ—ã®è¨ˆç®—
         auto current_time = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(current_time - start_time).count();
         double progress = (double)(pass + 1) / num_pass;
@@ -969,38 +1073,38 @@ int run_gpu_renderer(const SceneConfig sc) {
     std::chrono::duration<double> gpu_time = gpu_end - start_time;
     std::clog << "\nRendering finished! [GPU Compute Time: " << gpu_time.count() << " s]\n";
 
-    // g—p‚µ‚½ƒŠƒ\[ƒX‚ÌƒoƒCƒ“ƒh‚ğ‰ğœiŒã‘±‚ÌˆÀ‘S‚Ì‚½‚ßj
+    // ä½¿ç”¨ã—ãŸãƒªã‚½ãƒ¼ã‚¹ã®ãƒã‚¤ãƒ³ãƒ‰ã‚’è§£é™¤ï¼ˆå¾Œç¶šã®å®‰å…¨ã®ãŸã‚ï¼‰
     ID3D11UnorderedAccessView* nullUAV[] = { nullptr };
     context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
 
     //-----------------------------------------------------------------------------------------------
-    // GPU‚©‚çCPU‚Ö‚Ì“]‘—‚Æƒf[ƒ^“Ç‚İæ‚èiReadbackj
+    // GPUã‹ã‚‰CPUã¸ã®è»¢é€ã¨ãƒ‡ãƒ¼ã‚¿èª­ã¿å–ã‚Šï¼ˆReadbackï¼‰
     //-----------------------------------------------------------------------------------------------
-    // GPU“à•”‚ÅDefault‚©‚çStaging‚ÖƒeƒNƒXƒ`ƒƒ‚ğŠÛ‚²‚ÆƒRƒs[
+    // GPUå†…éƒ¨ã§Defaultã‹ã‚‰Stagingã¸ãƒ†ã‚¯ã‚¹ãƒãƒ£ã‚’ä¸¸ã”ã¨ã‚³ãƒ”ãƒ¼
     context->CopyResource(stagingTexture.Get(), outputTexture.Get());
     D3D11_MAPPED_SUBRESOURCE mapped = {};
     CheckHR(context->Map(stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mapped));
 
     //-----------------------------------------------------------------------------------------------
-    // PPMƒtƒ@ƒCƒ‹‚Ö‚Ì‘‚«o‚µ
+    // PPMãƒ•ã‚¡ã‚¤ãƒ«ã¸ã®æ›¸ãå‡ºã—
     //-----------------------------------------------------------------------------------------------
     std::clog << "Saving to image.ppm..." << std::endl;
     std::cout << "P3\n" << image_width << ' ' << image_height << "\n255\n";
 
-    // ƒƒ‚ƒŠ‚ÌŠes‚Ìæ“ªƒAƒhƒŒƒX‚ğRowPitchiƒpƒfƒBƒ“ƒOl—¶j‚ğg‚Á‚Ä‘–¸
+    // ãƒ¡ãƒ¢ãƒªã®å„è¡Œã®å…ˆé ­ã‚¢ãƒ‰ãƒ¬ã‚¹ã‚’RowPitchï¼ˆãƒ‘ãƒ‡ã‚£ãƒ³ã‚°è€ƒæ…®ï¼‰ã‚’ä½¿ã£ã¦èµ°æŸ»
     const uint8_t* rowPtr = static_cast<const uint8_t*>(mapped.pData);
 
     for (UINT y = 0; y < image_height; ++y) {
         const float* pixel = reinterpret_cast<const float*>(rowPtr);
         for (UINT x = 0; x < image_width; x++) {
-            // ‡Œv‹P“x‚ğ‘ƒTƒ“ƒvƒ‹”‚ÅŠ„‚Á‚Ä•½‹Ï‰»
+            // åˆè¨ˆè¼åº¦ã‚’ç·ã‚µãƒ³ãƒ—ãƒ«æ•°ã§å‰²ã£ã¦å¹³å‡åŒ–
             color pixel_color(
                 pixel[0] / static_cast<float>(sc.total_samples),
                 pixel[1] / static_cast<float>(sc.total_samples),
                 pixel[2] / static_cast<float>(sc.total_samples)
             );
             write_color(std::cout, pixel_color);
-            pixel += 4; // Ÿ‚ÌƒsƒNƒZƒ‹ifloat4•ªi‚ß‚éj
+            pixel += 4; // æ¬¡ã®ãƒ”ã‚¯ã‚»ãƒ«ï¼ˆfloat4åˆ†é€²ã‚ã‚‹ï¼‰
         }
         rowPtr += mapped.RowPitch;
     }
@@ -1015,7 +1119,7 @@ int run_gpu_renderer(const SceneConfig sc) {
 
 int main() {
     try {
-        // ƒŒƒ“ƒ_ƒŠƒ“ƒO‚µ‚½‚¢ƒV[ƒ“‚ğ‘I‘ğ
+        // ãƒ¬ãƒ³ãƒ€ãƒªãƒ³ã‚°ã—ãŸã„ã‚·ãƒ¼ãƒ³ã‚’é¸æŠ
         // 1: Bouncing Spheres
         // 2: Checkered Spheres
         // 3: Earth
@@ -1026,7 +1130,7 @@ int main() {
         // 8: Cornell Smoke
         // 9: Final Scene (Preview 250 samples)
         // 10: Final Scene (High Detail 10,000 samples)
-        int scene_id = 10;
+        int scene_id = 12;
 
         SceneConfig sc;
         switch (scene_id) {
@@ -1040,6 +1144,8 @@ int main() {
         case 8:  sc = scene_cornell_smoke(); break;
         case 9:  sc = scene_final_scene(0); break;
         case 10: sc = scene_final_scene(1);  break;
+        case 11: sc = scene_mirror_house(0); break;
+        case 12: sc = scene_mirror_house(1); break;
         default: sc = scene_final_scene(2); break;
         }
 
