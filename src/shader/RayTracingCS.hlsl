@@ -930,7 +930,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
                     // ----------------------------------------------------
                     // モンテカルロ積分: throughput *= (BRDF * cos(θ)) / PDF
                     // ----------------------------------------------------
-                    float3 outward_dir = rec.front_face ? rec.normal: -rec.normal;
+                    float3 outward_dir = rec.front_face ? rec.normal : -rec.normal;
                     ONB onb = build_onb(outward_dir);
                     
                     float3 scattered_dir;
@@ -971,6 +971,29 @@ void CSMain(uint3 id : SV_DispatchThreadID)
                     {
                         break;
                     }
+                }
+                
+                // ----------------------------------------------------
+                // ロシアンルーレット (Russian Roulette) による動的枝刈り
+                // ----------------------------------------------------
+                // 最初の3バウンスは主照明や直接反射を確実に捉えるため無条件に通過させる
+                if (bounce >= 3)
+                {
+                    // 現在の光の最大チャンネル成分を生存確率とする
+                    float p_rr = max(throughput.r, max(throughput.g, throughput.b));
+
+                    // 生存確率が極端に低くなった場合の重み爆発（ホタルノイズ）を防ぐクランプ
+                    p_rr = clamp(p_rr, 0.005f, 0.95f);
+                    
+                    // サイコロを降って脱落判定
+                    if (rand_float(rng) > p_rr)
+                    {
+                        // 追跡を早期終了
+                        break;
+                    }
+
+                    // 生き残ったレイの重みを補正（期待値を維持）
+                    throughput /= p_rr;
                 }
             }
             else
